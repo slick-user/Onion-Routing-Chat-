@@ -1,0 +1,138 @@
+{
+  "generated_at": "2026-11-13 18:54 UTC",
+  "machine": "Linux x86_64, Python 3.12.3",
+  "key_sizes": [
+    {
+      "rsa_bits": 2048,
+      "keygen_ms_per_key": 517.9,
+      "build_onion_ms": 1.12,
+      "end_to_end_ms": 224.69,
+      "security_note": "~112-bit security"
+    },
+    {
+      "rsa_bits": 3072,
+      "keygen_ms_per_key": 2091.6,
+      "build_onion_ms": 1.51,
+      "end_to_end_ms": 219.63,
+      "security_note": "~128-bit security (default)"
+    },
+    {
+      "rsa_bits": 4096,
+      "keygen_ms_per_key": 3137.8,
+      "build_onion_ms": 1.73,
+      "end_to_end_ms": 243.48,
+      "security_note": "~140-bit security"
+    }
+  ],
+  "padding": [
+    {
+      "message_chars": 10,
+      "unpadded_link_bytes": [
+        4431,
+        2799,
+        1575,
+        663
+      ],
+      "unpadded_total": 9468,
+      "padded_link_bytes": [
+        18432,
+        18432,
+        18432,
+        18432
+      ],
+      "padded_total": 73728,
+      "overhead_factor": 7.79
+    },
+    {
+      "message_chars": 500,
+      "unpadded_link_bytes": [
+        5971,
+        3955,
+        2443,
+        1315
+      ],
+      "unpadded_total": 13684,
+      "padded_link_bytes": [
+        18432,
+        18432,
+        18432,
+        18432
+      ],
+      "padded_total": 73728,
+      "overhead_factor": 5.39
+    },
+    {
+      "message_chars": 2000,
+      "unpadded_link_bytes": [
+        10711,
+        7511,
+        5111,
+        3315
+      ],
+      "unpadded_total": 26648,
+      "padded_link_bytes": [
+        18432,
+        18432,
+        18432,
+        18432
+      ],
+      "padded_total": 73728,
+      "overhead_factor": 2.77
+    },
+    {
+      "message_chars": 4000,
+      "unpadded_link_bytes": [
+        17039,
+        12255,
+        8667,
+        5983
+      ],
+      "unpadded_total": 43944,
+      "padded_link_bytes": [
+        18432,
+        18432,
+        18432,
+        18432
+      ],
+      "padded_total": 73728,
+      "overhead_factor": 1.68
+    }
+  ],
+  "mixing": [
+    {
+      "mix_delay_ms": 0,
+      "timing_attack_accuracy": 1.0,
+      "size_attack_accuracy": 0.25,
+      "avg_latency_ms": 231.0,
+      "random_guess": 0.167
+    },
+    {
+      "mix_delay_ms": 50,
+      "timing_attack_accuracy": 1.0,
+      "size_attack_accuracy": 0.125,
+      "avg_latency_ms": 1100.5,
+      "random_guess": 0.167
+    },
+    {
+      "mix_delay_ms": 100,
+      "timing_attack_accuracy": 0.542,
+      "size_attack_accuracy": 0.292,
+      "avg_latency_ms": 1056.7,
+      "random_guess": 0.167
+    },
+    {
+      "mix_delay_ms": 250,
+      "timing_attack_accuracy": 0.583,
+      "size_attack_accuracy": 0.083,
+      "avg_latency_ms": 1024.1,
+      "random_guess": 0.167
+    },
+    {
+      "mix_delay_ms": 500,
+      "timing_attack_accuracy": 0.208,
+      "size_attack_accuracy": 0.208,
+      "avg_latency_ms": 1263.6,
+      "random_guess": 0.167
+    }
+  ]
+}
