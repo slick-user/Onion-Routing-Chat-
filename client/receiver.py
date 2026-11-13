@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, HTTPException
 
@@ -22,8 +22,24 @@ def create_receiver_app(
     private_key: Any,
     key_id: str,
     db: Database,
+    observer: Callable[[dict[str, Any]], None] | None = None,
 ) -> FastAPI:
     events = EventRecorder(db, service_id=receiver_id, service_type="receiver")
+
+    def _observe(stage: str, **fields: Any) -> None:
+        if observer is None:
+            return
+        try:
+            observer(
+                {
+                    "service_id": receiver_id,
+                    "service_type": "receiver",
+                    "stage": stage,
+                    **fields,
+                }
+            )
+        except Exception:  # pragma: no cover - observer is optional instrumentation
+            pass
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -74,6 +90,7 @@ def create_receiver_app(
     async def receive(envelope: E2EEnvelope) -> DeliveryResponse:
         started = time.perf_counter()
         events.emit(EventType.PACKET_RECEIVED)
+        _observe("received", recipient_key_id=envelope.recipient_key_id)
 
         if envelope.recipient_key_id != key_id:
             events.emit(
@@ -82,6 +99,7 @@ def create_receiver_app(
                 duration_ms=(time.perf_counter() - started) * 1000,
                 error_category="key_mismatch",
             )
+            _observe("rejected", error_category="key_mismatch")
             raise HTTPException(status_code=400, detail="Invalid message envelope")
 
         events.emit(EventType.VALIDATION_SUCCESS)
@@ -95,6 +113,7 @@ def create_receiver_app(
                 duration_ms=(time.perf_counter() - started) * 1000,
                 error_category="authentication_failed",
             )
+            _observe("rejected", error_category="authentication_failed")
             raise HTTPException(status_code=400, detail="Message authentication failed") from None
         except CryptoError:
             events.emit(
@@ -103,9 +122,11 @@ def create_receiver_app(
                 duration_ms=(time.perf_counter() - started) * 1000,
                 error_category="decryption_failed",
             )
+            _observe("rejected", error_category="decryption_failed")
             raise HTTPException(status_code=400, detail="Message could not be decrypted") from None
 
         events.emit(EventType.DECRYPTION_SUCCESS)
+        _observe("decrypted")
 
         try:
             message = plaintext.decode("utf-8")
@@ -116,6 +137,7 @@ def create_receiver_app(
                 duration_ms=(time.perf_counter() - started) * 1000,
                 error_category="invalid_payload",
             )
+            _observe("rejected", error_category="invalid_payload")
             raise HTTPException(status_code=400, detail="Invalid message payload") from None
 
         try:
@@ -127,12 +149,18 @@ def create_receiver_app(
                 duration_ms=(time.perf_counter() - started) * 1000,
                 error_category="storage_error",
             )
+            _observe("failed", error_category="storage_error")
             raise HTTPException(status_code=500, detail="Message storage failed") from None
 
         events.emit(
             EventType.DELIVERY_SUCCESS,
             duration_ms=(time.perf_counter() - started) * 1000,
             detail=safe_detail(message_id=message_id),
+        )
+        _observe(
+            "stored",
+            message_id=message_id,
+            duration_ms=round((time.perf_counter() - started) * 1000, 2),
         )
         return DeliveryResponse(status="delivered", detail="message stored", message_id=message_id)
 

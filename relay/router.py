@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from pydantic import ValidationError
 
@@ -13,6 +13,7 @@ from crypto.encryption import AuthenticationError, CryptoError
 from crypto.onion import (
     InvalidLayerError,
     OnionError,
+    canonical_json,
     classify_instruction,
     packet_digest,
     peel_layer,
@@ -50,6 +51,9 @@ class Forwarder(Protocol):
     async def post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]: ...
 
 
+RelayObserver = Callable[[dict[str, Any]], None]
+
+
 @dataclass
 class RelayResult:
     status: str
@@ -71,6 +75,7 @@ class RelayProcessor:
         events: EventRecorder,
         forwarder: Forwarder,
         replay_ttl_seconds: int,
+        observer: RelayObserver | None = None,
     ):
         self.relay_id = relay_id
         self.role = role
@@ -81,10 +86,17 @@ class RelayProcessor:
         self.events = events
         self.forwarder = forwarder
         self.replay_ttl_seconds = replay_ttl_seconds
+        self.observer = observer
 
     async def process(self, envelope: OnionEnvelope) -> RelayResult:
         started = time.perf_counter()
         self.events.emit(EventType.PACKET_RECEIVED, detail=safe_detail(role=self.role.value))
+        self._observe(
+            "received",
+            started,
+            packet_bytes=len(canonical_json(envelope.model_dump())),
+            recipient_key_id=envelope.recipient_key_id,
+        )
 
         digest = packet_digest(envelope)
 
@@ -115,6 +127,30 @@ class RelayProcessor:
     def _duration_ms(started: float) -> float:
         return (time.perf_counter() - started) * 1000
 
+    def _observe(self, stage: str, started: float, **fields: Any) -> None:
+        """Send sanitized hop metadata to an optional observer.
+
+        Observers are used by the interactive demo to visualise what each hop
+        can and cannot see.  They are best-effort: a failing observer must
+        never affect packet processing, and no plaintext or key material is
+        ever included here.
+        """
+        if self.observer is None:
+            return
+        try:
+            self.observer(
+                {
+                    "service_id": self.relay_id,
+                    "service_type": "relay",
+                    "role": self.role.value,
+                    "stage": stage,
+                    "duration_ms": round(self._duration_ms(started), 2),
+                    **fields,
+                }
+            )
+        except Exception:  # pragma: no cover - observer is optional instrumentation
+            pass
+
     def _reject_replay(self, digest: str, started: float) -> None:
         if self.db.replay_exists(relay_id=self.relay_id, packet_digest=digest):
             self.events.emit(
@@ -124,6 +160,7 @@ class RelayProcessor:
                 error_category="replay_detected",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("rejected", started, error_category="replay_detected")
             raise ReplayDetectedError("replayed packet")
 
     def _check_recipient(self, envelope: OnionEnvelope, started: float) -> None:
@@ -135,6 +172,7 @@ class RelayProcessor:
                 error_category="key_mismatch",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("rejected", started, error_category="key_mismatch")
             raise InvalidPacketError("packet is not addressed to this relay")
 
     def _decrypt(self, envelope: OnionEnvelope, started: float) -> dict[str, Any]:
@@ -148,6 +186,7 @@ class RelayProcessor:
                 error_category="authentication_failed",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("rejected", started, error_category="authentication_failed")
             raise InvalidPacketError("packet authentication failed") from None
         except (InvalidLayerError, OnionError, CryptoError):
             self.events.emit(
@@ -157,6 +196,7 @@ class RelayProcessor:
                 error_category="decryption_failed",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("rejected", started, error_category="decryption_failed")
             raise InvalidPacketError("packet could not be decrypted") from None
 
         self.events.emit(
@@ -185,6 +225,7 @@ class RelayProcessor:
                 error_category="replay_detected",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("rejected", started, error_category="replay_detected")
             raise ReplayDetectedError("replayed packet")
 
     def _validate_instruction(self, instruction: dict[str, Any], started: float) -> str:
@@ -206,7 +247,13 @@ class RelayProcessor:
                 error_category="instruction_invalid",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("rejected", started, error_category="instruction_invalid")
             raise InvalidPacketError("invalid routing instruction") from None
+
+        if kind == "relay":
+            self._observe("decrypted", started, instruction="relay", next_hop_id=instruction["next_hop_id"])
+        else:
+            self._observe("decrypted", started, instruction="exit", receiver_id=instruction["receiver_id"])
         return kind
 
     async def _forward(self, instruction: dict[str, Any], digest: str, started: float) -> RelayResult:
@@ -220,6 +267,7 @@ class RelayProcessor:
                 error_category="unknown_peer",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("rejected", started, error_category="unknown_peer")
             raise InvalidPacketError("unknown next hop") from None
 
         try:
@@ -237,6 +285,7 @@ class RelayProcessor:
                 error_category="transport_error",
                 detail=safe_detail(role=self.role.value, hop=self.validated_hop(validated)),
             )
+            self._observe("failed", started, error_category="transport_error")
             raise ForwardingError("downstream relay unavailable") from None
 
         duration = (time.perf_counter() - started) * 1000
@@ -245,6 +294,7 @@ class RelayProcessor:
             duration_ms=duration,
             detail=safe_detail(role=self.role.value, hop=self.validated_hop(validated)),
         )
+        self._observe("forwarded", started, next_hop_id=validated.next_hop_id)
         return RelayResult(
             status="forwarded",
             duration_ms=round(duration, 2),
@@ -263,6 +313,7 @@ class RelayProcessor:
                 error_category="unknown_peer",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("rejected", started, error_category="unknown_peer")
             raise InvalidPacketError("unknown receiver") from None
 
         try:
@@ -280,10 +331,12 @@ class RelayProcessor:
                 error_category="transport_error",
                 detail=safe_detail(role=self.role.value),
             )
+            self._observe("failed", started, error_category="transport_error")
             raise ForwardingError("receiver unavailable") from None
 
         duration = (time.perf_counter() - started) * 1000
         self.events.emit(EventType.DELIVERY_SUCCESS, duration_ms=duration, detail=safe_detail(role=self.role.value))
+        self._observe("delivered", started, receiver_id=exit_instruction.receiver_id)
         return RelayResult(
             status="delivered",
             duration_ms=round(duration, 2),

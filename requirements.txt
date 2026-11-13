@@ -4,3 +4,4 @@ pycryptodome
 httpx
 pydantic
 pytest
+jinja2

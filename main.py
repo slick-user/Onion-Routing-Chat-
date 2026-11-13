@@ -5,6 +5,7 @@ Examples:
     python main.py run-all
     python main.py send --message "Hello Bob! This is an OnionChat test."
     python main.py demo
+    python main.py web
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import subprocess
 import sys
 import time
@@ -189,6 +191,22 @@ async def _collect_status() -> list[dict[str, Any]]:
     return results
 
 
+def cmd_run_web(args: argparse.Namespace) -> int:
+    """Run the interactive single-port demo used for hosting."""
+    configure_logging(args.log_level)
+    host = args.host or os.environ.get("ONIONCHAT_WEB_HOST", "127.0.0.1")
+    port = args.port if args.port is not None else int(os.environ.get("PORT", "8080"))
+
+    # Imported lazily so the CLI commands stay usable without the web extras.
+    from web.app import create_web_app
+
+    print("Preparing OnionChat web demo (RSA-3072 keys are generated if missing)...")
+    app = create_web_app()
+    print(f"OnionChat web demo listening on http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_config=None, access_log=False)
+    return 0
+
+
 def cmd_run_all(args: argparse.Namespace) -> int:
     configure_logging(args.log_level)
     _require_all_keys()
@@ -354,6 +372,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_all_parser = subparsers.add_parser("run-all", help="run all four local services")
     run_all_parser.set_defaults(func=cmd_run_all)
+
+    web_parser = subparsers.add_parser("web", help="run the interactive single-port web demo")
+    web_parser.add_argument("--host", default=None)
+    web_parser.add_argument("--port", type=int, default=None)
+    web_parser.set_defaults(func=cmd_run_web)
 
     send_parser = subparsers.add_parser("send", help="send a message through the onion path")
     send_parser.add_argument("--message", default=DEFAULT_MESSAGE)

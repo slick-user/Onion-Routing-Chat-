@@ -13,6 +13,12 @@ COPY . .
 
 RUN mkdir -p /app/data/keys /app/data/db
 
-EXPOSE 8001 8002 8003 9000
+ENV PORT=8080
+
+EXPOSE 8001 8002 8003 9000 8080
 
 ENTRYPOINT ["python", "main.py"]
+
+# The image defaults to the single-port interactive demo; docker-compose and
+# the CLI examples override this command for the individual services.
+CMD ["web", "--host", "0.0.0.0"]

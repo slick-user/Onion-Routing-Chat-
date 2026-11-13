@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" width="1200" height="660" role="img" aria-labelledby="diagram-title diagram-desc">
+  <title id="diagram-title">OnionChat three-hop circuit</title>
+  <desc id="diagram-desc">Alice wraps an end-to-end encrypted message in three onion layers for Relay A, Relay B and Relay C. Each relay removes one layer and learns only its predecessor and successor. Bob decrypts the inner message with his own private key.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5b729a"/>
+    </marker>
+    <marker id="arrow-e2e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4ade80"/>
+    </marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1222"/>
+      <stop offset="1" stop-color="#070c18"/>
+    </linearGradient>
+    <style>
+      .title { font: 700 30px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #e9eefb; }
+      .subtitle { font: 400 15px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #9aabc9; }
+      .node-label { font: 700 16px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      .node-role { font: 600 10px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; letter-spacing: 1px; }
+      .wire-label { font: 600 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #8ba0c4; }
+      .sees { font: 400 11px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #9aabc9; }
+      .panel-title { font: 700 14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #e9eefb; }
+      .panel-text { font: 400 11.5px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #9aabc9; }
+      .mono { font: 600 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; fill: #b9c8e2; }
+      .note { font: 400 10.5px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; fill: #7183a5; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="660" rx="18" fill="url(#bg)"/>
+  <g opacity="0.35" stroke="#243251" stroke-width="1">
+    <path d="M0 120 H1200 M0 240 H1200 M0 360 H1200 M0 480 H1200 M0 600 H1200"/>
+    <path d="M120 0 V660 M300 0 V660 M480 0 V660 M660 0 V660 M840 0 V660 M1020 0 V660"/>
+  </g>
+
+  <text x="48" y="58" class="title">OnionChat · three-hop circuit</text>
+  <text x="48" y="86" class="subtitle">One AES-256-GCM layer per relay, plus an independent end-to-end encryption for Bob.</text>
+
+  <!-- Wires -->
+  <g stroke="#5b729a" stroke-width="2.5" marker-end="url(#arrow)">
+    <line x1="164" y1="210" x2="276" y2="210"/>
+    <line x1="392" y1="210" x2="504" y2="210"/>
+    <line x1="620" y1="210" x2="732" y2="210"/>
+    <line x1="848" y1="210" x2="956" y2="210"/>
+  </g>
+  <text x="178" y="196" class="wire-label">A-layer</text>
+  <text x="406" y="196" class="wire-label">B-layer</text>
+  <text x="634" y="196" class="wire-label">C-layer</text>
+  <text x="862" y="196" class="wire-label">E2E envelope</text>
+
+  <!-- Nodes -->
+  <g>
+    <circle cx="112" cy="210" r="46" fill="#10233f" stroke="#5ea2ff" stroke-width="2.5"/>
+    <text x="112" y="216" text-anchor="middle" class="node-label" fill="#8ab9ff">A</text>
+    <text x="112" y="292" text-anchor="middle" class="node-label" fill="#e9eefb">Alice</text>
+    <text x="112" y="310" text-anchor="middle" class="node-role" fill="#7183a5">SENDER</text>
+    <text x="112" y="334" text-anchor="middle" class="sees">knows the full route</text>
+  </g>
+
+  <g>
+    <circle cx="330" cy="210" r="46" fill="#2a2010" stroke="#f6a94a" stroke-width="2.5"/>
+    <text x="330" y="218" text-anchor="middle" class="node-label" fill="#f6c76a">1</text>
+    <text x="330" y="292" text-anchor="middle" class="node-label" fill="#e9eefb">Relay A</text>
+    <text x="330" y="310" text-anchor="middle" class="node-role" fill="#7183a5">ENTRY</text>
+    <text x="330" y="334" text-anchor="middle" class="sees">sees Alice → Relay B</text>
+  </g>
+
+  <g>
+    <circle cx="560" cy="210" r="46" fill="#0f2d2c" stroke="#38d0c0" stroke-width="2.5"/>
+    <text x="560" y="218" text-anchor="middle" class="node-label" fill="#64e3d4">2</text>
+    <text x="560" y="292" text-anchor="middle" class="node-label" fill="#e9eefb">Relay B</text>
+    <text x="560" y="310" text-anchor="middle" class="node-role" fill="#7183a5">MIDDLE</text>
+    <text x="560" y="334" text-anchor="middle" class="sees">sees Relay A → Relay C</text>
+  </g>
+
+  <g>
+    <circle cx="790" cy="210" r="46" fill="#241b3f" stroke="#a78bfa" stroke-width="2.5"/>
+    <text x="790" y="218" text-anchor="middle" class="node-label" fill="#c4b5fd">3</text>
+    <text x="790" y="292" text-anchor="middle" class="node-label" fill="#e9eefb">Relay C</text>
+    <text x="790" y="310" text-anchor="middle" class="node-role" fill="#7183a5">EXIT</text>
+    <text x="790" y="334" text-anchor="middle" class="sees">sees Relay B → Bob</text>
+  </g>
+
+  <g>
+    <circle cx="1008" cy="210" r="46" fill="#102b1c" stroke="#4ade80" stroke-width="2.5"/>
+    <text x="1008" y="216" text-anchor="middle" class="node-label" fill="#86efac">B</text>
+    <text x="1008" y="292" text-anchor="middle" class="node-label" fill="#e9eefb">Bob</text>
+    <text x="1008" y="310" text-anchor="middle" class="node-role" fill="#7183a5">RECEIVER</text>
+    <text x="1008" y="334" text-anchor="middle" class="sees">owns the E2E key</text>
+  </g>
+
+  <!-- End-to-end band -->
+  <path d="M112 258 C 400 440, 720 440, 1008 258" fill="none" stroke="#4ade80" stroke-width="2.5" stroke-dasharray="7 6" marker-end="url(#arrow-e2e)"/>
+  <rect x="419" y="378" width="282" height="34" rx="17" fill="#0f2b1e" stroke="#2f7a4d"/>
+  <text x="560" y="400" text-anchor="middle" class="mono" fill="#9ae6b4">E2E ciphertext for Bob · AES-256-GCM</text>
+  <text x="560" y="450" text-anchor="middle" class="note">Relays can peel the onion, but they never hold the message key or Bob's private key.</text>
+
+  <!-- Bottom-left panel: layer peeling -->
+  <g>
+    <rect x="48" y="548" width="644" height="84" rx="12" fill="#0c1526" stroke="#243251"/>
+    <text x="66" y="574" class="panel-title">Each relay removes exactly one authenticated layer</text>
+    <text x="66" y="596" class="panel-text">Relay A: unwrap A key → verify GCM tag → read next hop → forward the smaller onion.</text>
+    <text x="66" y="614" class="panel-text">Relay B: repeat for B.  Relay C: repeat for C, then deliver the opaque E2E envelope.</text>
+  </g>
+
+  <!-- Bottom-right panel: invariants -->
+  <g>
+    <rect x="712" y="548" width="440" height="84" rx="12" fill="#0c1526" stroke="#243251"/>
+    <text x="730" y="574" class="panel-title">Enforced by construction</text>
+    <text x="730" y="596" class="panel-text">AES-256-GCM · RSA-3072 OAEP-SHA-256 · domain-separated AAD</text>
+    <text x="730" y="614" class="panel-text">Trusted logical next hops · replay cache · no packet-supplied URLs</text>
+  </g>
+</svg>

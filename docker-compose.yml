@@ -74,8 +74,26 @@ services:
       timeout: 3s
       retries: 12
 
+  web:
+    <<: *onionchat-service
+    command: ["web", "--host", "0.0.0.0", "--port", "8080"]
+    environment:
+      <<: *onionchat-env
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/keys:/app/data/keys:rw
+      - web_db:/app/data/db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
 volumes:
   relay_a_db:
   relay_b_db:
   relay_c_db:
   receiver_db:
+  web_db:

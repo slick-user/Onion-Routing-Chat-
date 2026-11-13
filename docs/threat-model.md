@@ -3,8 +3,8 @@
 ## Scope
 
 This document describes the security properties and limitations of the
-educational OnionChat implementation. It is not a production anonymity
-analysis.
+educational OnionChat implementation, including its interactive web frontend
+and single-port hosted demo. It is not a production anonymity analysis.
 
 ## Assets
 
@@ -14,6 +14,8 @@ analysis.
 - Message metadata (sender/receiver endpoints, timing, circuit path).
 - Relay configuration and allowlists.
 - Replay state and operational events.
+- Demo inbox contents, session traces and the key-metadata view served by the
+  web API.
 
 ## Adversaries considered
 
@@ -29,6 +31,13 @@ analysis.
    private key.
 6. **Local unprivileged user on the same host.** May attempt to read key files
    or databases.
+7. **Malicious web client.** Can call the public JSON API directly to send
+   messages, run attack experiments, read Bob's inbox, scrape key metadata, or
+   reset demo state. Can also attempt XSS, content sniffing, framing and
+   cross-site request patterns against the browser UI.
+8. **Hosted-demo operator or process attacker.** Can reach the single-process
+   topology, where all four services and the web app share one address space
+   and filesystem.
 
 ## Mitigations
 
@@ -45,6 +54,14 @@ analysis.
 | Key file exposure | Private keys written `0600`, key directory `0700`, permissions tightened on load. |
 | Slow/unavailable peer | Explicit HTTP timeouts, no redirects, graceful 502 responses. |
 | Unexpected crypto errors | Authentication failures fail closed; no partial acceptance. |
+| XSS / content injection in the UI | Jinja2 autoescaping; all dynamic values inserted with `textContent`, never `innerHTML`; CSP restricts scripts and styles to same-origin. |
+| Clickjacking and MIME sniffing | `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cache-Control: no-store`. |
+| Secret exposure through the web API | Only public key IDs, algorithm, truncated SHA-256 fingerprints and file modes are returned. Private keys are loaded server-side and never serialised. |
+| Plaintext leakage into traces/logs | Hop observers record sanitised metadata only; the sole plaintext endpoint is Bob's inbox (`GET /api/messages`). Web tests assert the message never appears in send/attack responses, traces or event rows. |
+| Hostile web input | Pydantic `extra="forbid"`, message length 1–4000, bounded query limits, fixed attack allowlist, 256 KiB ASGI body cap, JSON-only handlers. |
+| SSRF through the web runtime | The same logical-ID registry is used; there is no user-supplied URL parameter, and the SSRF experiment is rejected without an outbound request. |
+| Demo-state destruction via the API | `POST /api/reset` only clears messages, events and replay rows; it never deletes keys. Public in the demo, documented as a residual risk. |
+| Browser-driven cross-site requests | Same-origin JSON API, no permissive CORS, no inline executable script. A CSRF token and authentication are still required before any non-sandbox deployment. |
 
 ## Residual risks
 
@@ -67,6 +84,17 @@ analysis.
   deployment requires TLS/mTLS and a hardened network configuration.
 - **SQLite limitations.** Single-host persistence and no distributed replay
   coordination between replicas.
+- **Public demo API.** `/api/send`, `/api/attack`, `/api/messages` and
+  `/api/reset` are unauthenticated. Anyone who can reach the app can send
+  traffic, read Bob's inbox, probe attack outcomes or clear demo data. There is
+  no rate limiting, quota, audit trail or CSRF token. The demo must not hold
+  real secrets.
+- **Single-process hosted topology.** In web/demo mode all services share one
+  process, filesystem and event loop. The relay/receiver logic is real, but
+  process isolation, host compromise and network-level attacker models do not
+  apply to that mode.
+- **Ephemeral hosted storage.** Free platforms usually reset keys, databases
+  and inbox contents on redeploy or restart.
 
 ## Explicit non-goals
 
@@ -75,4 +103,5 @@ analysis.
 - Cryptographic forward secrecy or post-compromise security.
 - Malicious relay detection or accountability.
 - Production key management, HSM integration, or at-rest encryption.
-- A frontend, user accounts, or message signing.
+- User accounts, message signing, or multi-tenant authorisation.
+- Production hardening of the demo API (authentication, rate limiting, WAF).

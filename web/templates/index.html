@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="OnionChat is an interactive, educational demonstration of three-hop onion routing with AES-256-GCM and RSA-OAEP.">
+  <meta name="theme-color" content="#0b1020">
+  <title>OnionChat — Interactive Onion Routing</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230b1020'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23f6a94a' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='13' fill='none' stroke='%2338d0c0' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='4' fill='%239b8cff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="/static/js/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"><span></span></span>
+      <div class="brand-text">
+        <span class="brand-name">OnionChat</span>
+        <span class="brand-tag">Three hops. Three keys. One private message.</span>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <span class="status-pill" id="app-status" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text">Checking services…</span>
+      </span>
+      <button type="button" class="btn ghost small" id="tour-start" aria-label="Restart the guided tour">
+        Guided tour
+      </button>
+    </div>
+  </header>
+
+  <nav class="tabs-wrap" aria-label="Demo sections">
+    <div class="tabs" role="tablist" aria-label="Demo sections">
+      <button type="button" class="tab is-active" role="tab" id="tab-circuit" data-tab="circuit"
+              aria-selected="true" aria-controls="panel-circuit">
+        <span class="tab-num" aria-hidden="true">01</span> Circuit
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-lab" data-tab="lab"
+              aria-selected="false" aria-controls="panel-lab" tabindex="-1">
+        <span class="tab-num" aria-hidden="true">02</span> Security lab
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-learn" data-tab="learn"
+              aria-selected="false" aria-controls="panel-learn" tabindex="-1">
+        <span class="tab-num" aria-hidden="true">03</span> How it works
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-keys" data-tab="keys"
+              aria-selected="false" aria-controls="panel-keys" tabindex="-1">
+        <span class="tab-num" aria-hidden="true">04</span> Keys &amp; logs
+      </button>
+    </div>
+  </nav>
+
+  <main id="main" class="page">
+    <!-- ============================== CIRCUIT ============================== -->
+    <section class="panel" id="panel-circuit" role="tabpanel" aria-labelledby="tab-circuit" tabindex="0">
+      <div class="panel-head">
+        <p class="eyebrow">Live demo</p>
+        <h1>Send a message through an onion circuit</h1>
+        <p class="lede">
+          Alice encrypts her message for Bob, then wraps it in three authenticated layers —
+          one for each relay. Every relay can peel only its own layer.
+        </p>
+        <div class="fact-chips" aria-label="Cryptographic primitives in use">
+          <span class="chip">AES-256-GCM layers</span>
+          <span class="chip">RSA-3072 · OAEP-SHA256</span>
+          <span class="chip">Independent end-to-end encryption</span>
+          <span class="chip">Replay cache</span>
+        </div>
+      </div>
+
+      <div class="circuit-layout">
+        <article class="card composer-card" id="composer-card">
+          <div class="card-head">
+            <h2 class="card-title">Compose as Alice</h2>
+            <span class="badge" id="composer-badge">ready</span>
+          </div>
+          <p class="card-sub">
+            This text is encrypted once for Bob and separately wrapped for each relay.
+            It is never sent to a relay in plaintext.
+          </p>
+          <form id="send-form" novalidate>
+            <label class="sr-only" for="message-input">Message for Bob</label>
+            <textarea id="message-input" name="message" rows="5" maxlength="{{ max_message_chars }}"
+                      placeholder="Hello Bob! This is an OnionChat test." required></textarea>
+            <div class="composer-meta">
+              <div class="examples" aria-label="Example messages">
+                <button type="button" class="example" data-message="Hello Bob! This is an OnionChat test.">Hello Bob</button>
+                <button type="button" class="example" data-message="Meet me at the usual place at 7pm. Bring the blue notebook.">Meeting plan</button>
+                <button type="button" class="example" data-message="The package has arrived. Do not reply to this message.">No reply</button>
+              </div>
+              <span class="counter" id="char-count">0 / {{ max_message_chars }}</span>
+            </div>
+            <p class="field-hint" id="send-feedback" role="status" aria-live="polite">
+              Bob is <span class="mono">{{ receiver_id }}</span>. Relay path: Relay A → Relay B → Relay C.
+            </p>
+            <button type="submit" class="btn primary block" id="send-button">
+              <span class="btn-label">Seal &amp; send onion</span>
+              <span class="btn-spinner" aria-hidden="true"></span>
+            </button>
+          </form>
+          <div class="envelope-note">
+            <span class="lock" aria-hidden="true">&#9679;</span>
+            <span>Each relay decrypts one layer with its own private key. Relays never receive Bob's key.</span>
+          </div>
+        </article>
+
+        <article class="card circuit-card" id="circuit-card">
+          <div class="card-head">
+            <h2 class="card-title">The circuit</h2>
+            <span class="badge" id="circuit-badge">idle</span>
+          </div>
+          <div class="circuit" id="circuit" aria-label="Onion routing circuit from Alice through three relays to Bob">
+            <div class="hop" data-service="alice" id="hop-alice">
+              <div class="hop-top">
+                <span class="hop-icon alice" aria-hidden="true">A</span>
+                <div class="hop-name-wrap">
+                  <span class="hop-name">Alice</span>
+                  <span class="hop-role">sender</span>
+                </div>
+              </div>
+              <p class="hop-state" data-state>builds the onion</p>
+              <p class="hop-sees" data-sees>knows the full route</p>
+            </div>
+
+            <div class="wire" data-wire="0" aria-hidden="true"><span class="wire-dot"></span></div>
+
+            {% for relay in relays %}
+            <div class="hop" data-service="{{ relay.id }}" id="hop-{{ relay.id }}">
+              <div class="hop-top">
+                <span class="hop-icon relay-{{ loop.index }}" aria-hidden="true">{{ loop.index }}</span>
+                <div class="hop-name-wrap">
+                  <span class="hop-name">{{ relay.label }}</span>
+                  <span class="hop-role">{{ relay.role }} relay</span>
+                </div>
+              </div>
+              <p class="hop-state" data-state>idle</p>
+              <p class="hop-sees" data-sees>waiting for a packet</p>
+            </div>
+            <div class="wire" data-wire="{{ loop.index }}" aria-hidden="true"><span class="wire-dot"></span></div>
+            {% endfor %}
+
+            <div class="hop" data-service="{{ receiver_id }}" id="hop-bob">
+              <div class="hop-top">
+                <span class="hop-icon bob" aria-hidden="true">B</span>
+                <div class="hop-name-wrap">
+                  <span class="hop-name">Bob</span>
+                  <span class="hop-role">receiver</span>
+                </div>
+              </div>
+              <p class="hop-state" data-state>waits for delivery</p>
+              <p class="hop-sees" data-sees>owns the E2E key</p>
+            </div>
+          </div>
+
+          <div class="circuit-progress" role="status" aria-live="polite">
+            <span id="circuit-summary">Send a message to animate the circuit.</span>
+          </div>
+
+          <div class="split">
+            <div class="subcard">
+              <h3 class="subcard-title">
+                Onion cross-section
+                <span class="info" tabindex="0" role="note" data-tip="Each relay removes one layer, so the packet becomes smaller at every hop."
+                      aria-label="Each relay removes one layer, so the packet becomes smaller at every hop.">i</span>
+              </h3>
+              <div class="layers-chart" id="layers-chart">
+                <p class="empty small">Sizes appear after the first send.</p>
+              </div>
+              <p class="micro" id="layers-caption"></p>
+            </div>
+            <div class="subcard">
+              <h3 class="subcard-title">
+                End-to-end encryption
+                <span class="info" tabindex="0" role="note" data-tip="The message is encrypted for Bob before the onion layers are added. Relays only handle ciphertext for Bob."
+                      aria-label="The message is encrypted for Bob before the onion layers are added. Relays only handle ciphertext for Bob.">i</span>
+              </h3>
+              <div class="e2e-graphic" aria-hidden="true">
+                <span class="e2e-endpoint">Alice</span>
+                <span class="e2e-link"><span class="e2e-dot"></span></span>
+                <span class="e2e-endpoint">Bob</span>
+              </div>
+              <p class="micro">
+                A separate AES-256-GCM key protects the message itself. Its key is wrapped only for
+                Bob, so compromising a relay does not reveal the plaintext.
+              </p>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <article class="card inspector-card" id="hop-inspector">
+        <div class="card-head">
+          <h2 class="card-title">What each hop can see</h2>
+          <span class="badge" id="inspector-badge">no packet yet</span>
+        </div>
+        <p class="card-sub">
+          The trace below is generated from the actual relay and receiver processing events.
+          Notice how little each hop learns.
+        </p>
+        <div class="inspector" id="inspector">
+          <div class="inspector-placeholder">
+            <div class="empty-illustration" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <p>Send a message, then inspect exactly what Alice, each relay, and Bob observed.</p>
+            <p class="micro">No plaintext, private keys, or raw packet bytes are ever rendered.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="card inbox-card" id="inbox-card">
+        <div class="card-head">
+          <h2 class="card-title">Bob's inbox</h2>
+          <div class="card-head-actions">
+            <span class="badge" id="inbox-count">0 messages</span>
+            <button type="button" class="btn ghost small" id="inbox-refresh">Refresh</button>
+          </div>
+        </div>
+        <div class="inbox" id="inbox-list" aria-live="polite">
+          <p class="empty">No messages delivered yet. Send one as Alice.</p>
+        </div>
+      </article>
+    </section>
+
+    <!-- ============================== SECURITY LAB ============================== -->
+    <section class="panel" id="panel-lab" role="tabpanel" aria-labelledby="tab-lab" tabindex="0" hidden>
+      <div class="panel-head">
+        <p class="eyebrow">Security lab</p>
+        <h1>Try to break the protocol</h1>
+        <p class="lede">
+          Each experiment sends a deliberately malformed or hostile packet through the real services.
+          The verdict comes from the HTTP response and the relay trace — not from a simulation of a check.
+        </p>
+      </div>
+
+      <div class="lab-layout">
+        <div class="attack-grid" id="attack-grid">
+          {% for attack in attacks %}
+          <button type="button" class="attack-card" data-attack="{{ attack.id }}">
+            <span class="attack-card-top">
+              <span class="attack-title">{{ attack.title }}</span>
+              <span class="attack-code">HTTP {{ attack.expected }}</span>
+            </span>
+            <span class="attack-desc">{{ attack.explanation }}</span>
+            <span class="attack-run">Run experiment <span aria-hidden="true">→</span></span>
+          </button>
+          {% endfor %}
+        </div>
+
+        <aside class="lab-side">
+          <article class="card result-card" id="attack-result" hidden>
+            <div class="verdict" id="attack-verdict">
+              <span class="verdict-label" id="attack-verdict-label">Result</span>
+              <span class="verdict-code" id="attack-code">—</span>
+            </div>
+            <h2 class="result-title" id="attack-title">Attack title</h2>
+            <p class="result-text" id="attack-explanation"></p>
+            <dl class="result-meta">
+              <div><dt>Actual response</dt><dd id="attack-actual">—</dd></div>
+              <div><dt>Expected</dt><dd id="attack-expected">—</dd></div>
+              <div><dt>Outcome</dt><dd id="attack-outcome">—</dd></div>
+            </dl>
+            <h3 class="subcard-title">Observed hop trace</h3>
+            <ol class="mini-trace" id="attack-trace"></ol>
+            <p class="micro" id="attack-trace-note" hidden></p>
+          </article>
+
+          <article class="card log-card">
+            <div class="card-head">
+              <h2 class="card-title">Experiments this session</h2>
+              <span class="badge" id="attack-log-count">0</span>
+            </div>
+            <div class="attack-log" id="attack-log">
+              <p class="empty small" id="attack-log-empty">No experiments run yet.</p>
+            </div>
+          </article>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============================== LEARN ============================== -->
+    <section class="panel" id="panel-learn" role="tabpanel" aria-labelledby="tab-learn" tabindex="0" hidden>
+      <div class="panel-head">
+        <p class="eyebrow">How it works</p>
+        <h1>Peel the onion, one trusted hop at a time</h1>
+        <p class="lede">
+          Onion routing separates <em>who you are</em> from <em>what you say</em>. Each relay learns only
+          the previous and next hop, never the whole path or the message.
+        </p>
+      </div>
+
+      <div class="learn-grid">
+        <article class="card onion-card">
+          <div class="card-head">
+            <h2 class="card-title">The packet Alice builds</h2>
+            <span class="badge">inside-out</span>
+          </div>
+          <div class="onion-stack" id="onion-stack">
+            <div class="onion-shell shell-a" data-layer="a" tabindex="0" role="button"
+                 aria-label="Relay A layer">
+              <span class="shell-label">Relay A layer</span>
+              <div class="onion-shell shell-b" data-layer="b" tabindex="0" role="button"
+                   aria-label="Relay B layer">
+                <span class="shell-label">Relay B layer</span>
+                <div class="onion-shell shell-c" data-layer="c" tabindex="0" role="button"
+                     aria-label="Relay C layer">
+                  <span class="shell-label">Relay C layer</span>
+                  <div class="onion-core">
+                    <span class="core-lock" aria-hidden="true">&#9679;</span>
+                    <span>E2E ciphertext for Bob</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="onion-explain" id="onion-explain" role="status" aria-live="polite">
+            Select a layer to see what that relay can learn.
+          </p>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <h2 class="card-title">Cryptographic building blocks</h2>
+            <span class="badge">PyCryptodome</span>
+          </div>
+          <dl class="crypto-list">
+            <div>
+              <dt>AES-256-GCM <span class="chip tiny">AEAD</span></dt>
+              <dd>Every onion layer and the end-to-end message use 256-bit keys with a 96-bit nonce and a 128-bit authentication tag. A modified byte fails authentication.</dd>
+            </div>
+            <div>
+              <dt>RSA-3072 · OAEP-SHA-256 <span class="chip tiny">key transport</span></dt>
+              <dd>Each one-time AES session key is wrapped with the recipient's public key. Only the holder of the matching private key can unwrap it.</dd>
+            </div>
+            <div>
+              <dt>Domain separation <span class="chip tiny">AAD</span></dt>
+              <dd>Associated data binds each ciphertext to its protocol version, domain (<span class="mono">onion</span> or <span class="mono">e2e</span>), and recipient key ID.</dd>
+            </div>
+            <div>
+              <dt>Replay defence <span class="chip tiny">stateful</span></dt>
+              <dd>Each relay stores a SHA-256 digest of accepted packets for {{ replay_ttl_seconds }} seconds. A duplicate is rejected with HTTP 409.</dd>
+            </div>
+            <div>
+              <dt>Trusted next hops <span class="chip tiny">allowlist</span></dt>
+              <dd>Decrypted instructions contain logical IDs only. A local registry maps them to endpoints, so packet data cannot trigger an SSRF request.</dd>
+            </div>
+          </dl>
+        </article>
+      </div>
+
+      <div class="learn-grid">
+        <article class="card">
+          <div class="card-head">
+            <h2 class="card-title">Who learns what</h2>
+            <span class="badge">metadata view</span>
+          </div>
+          <div class="table-wrap">
+            <table class="table privacy-table">
+              <thead>
+                <tr>
+                  <th scope="col">Participant</th>
+                  <th scope="col">Can see</th>
+                  <th scope="col">Cannot see</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <th scope="row">Alice</th>
+                  <td>The route and the message (she created them)</td>
+                  <td>Whether Bob has read the message</td>
+                </tr>
+                <tr>
+                  <th scope="row">Relay A</th>
+                  <td>Alice as predecessor, Relay B as successor, packet size</td>
+                  <td>Relay C, Bob, the message, the rest of the route</td>
+                </tr>
+                <tr>
+                  <th scope="row">Relay B</th>
+                  <td>Relay A as predecessor, Relay C as successor</td>
+                  <td>Alice, Bob, the message</td>
+                </tr>
+                <tr>
+                  <th scope="row">Relay C</th>
+                  <td>Relay B as predecessor, Bob as receiver</td>
+                  <td>Alice, the message, earlier hops beyond Relay B</td>
+                </tr>
+                <tr>
+                  <th scope="row">Bob</th>
+                  <td>The message after E2E decryption</td>
+                  <td>A cryptographically authenticated sender identity</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <h2 class="card-title">Design trade-offs</h2>
+            <span class="badge">honest limits</span>
+          </div>
+          <ul class="tradeoffs">
+            <li><strong>Three fixed relays.</strong> The demo uses a static path for clarity; a real network needs path selection, diversity, and churn handling.</li>
+            <li><strong>Timing and size leakage.</strong> Packet sizes shrink at each hop and timing can correlate traffic. Production systems use fixed-size cells and cover traffic.</li>
+            <li><strong>No sender authentication.</strong> Bob knows the message is authentic as ciphertext, but not who sent it. A signature or anonymous credential layer would be needed.</li>
+            <li><strong>Endpoint trust.</strong> Compromising Alice or Bob exposes plaintext. Onion routing protects the path in between, not the endpoints.</li>
+            <li><strong>Single-process hosting.</strong> The hosted demo runs all services in one process for free deployment; the request/relay code paths still use real HTTP semantics.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============================== KEYS & LOGS ============================== -->
+    <section class="panel" id="panel-keys" role="tabpanel" aria-labelledby="tab-keys" tabindex="0" hidden>
+      <div class="panel-head">
+        <p class="eyebrow">Observability</p>
+        <h1>Keys, service state, and logs</h1>
+        <p class="lede">
+          Public metadata only. Private keys never leave the server and are never exposed by the API.
+        </p>
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <h2 class="card-title">Service status</h2>
+          <button type="button" class="btn ghost small" id="services-refresh">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Service</th>
+                <th scope="col">Role</th>
+                <th scope="col">Status</th>
+                <th scope="col">Received</th>
+                <th scope="col">Forwarded</th>
+                <th scope="col">Delivered</th>
+                <th scope="col">Rejected / failed</th>
+                <th scope="col">Replays</th>
+              </tr>
+            </thead>
+            <tbody id="services-body">
+              <tr><td colspan="8" class="empty small">Loading service state…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card" id="keys-card">
+        <div class="card-head">
+          <h2 class="card-title">
+            Key material
+            <span class="info" tabindex="0" role="note" data-tip="Only public fingerprints, key identifiers and file permissions are shown."
+                  aria-label="Only public fingerprints, key identifiers and file permissions are shown.">i</span>
+          </h2>
+          <span class="badge">RSA-3072</span>
+        </div>
+        <p class="card-sub" id="keys-note">
+          Fingerprints let you compare public keys without exposing them. Private key files are permission-checked on load.
+        </p>
+        <div class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th scope="col">Service</th>
+                <th scope="col">Role</th>
+                <th scope="col">Key ID</th>
+                <th scope="col">Algorithm</th>
+                <th scope="col">Public fingerprint (truncated SHA-256)</th>
+                <th scope="col">Private key mode</th>
+              </tr>
+            </thead>
+            <tbody id="keys-body">
+              <tr><td colspan="6" class="empty small">Loading key metadata…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2 class="card-title">Operational event log</h2>
+          <div class="card-head-actions">
+            <label class="sr-only" for="event-filter">Filter events by service</label>
+            <select id="event-filter" class="select">
+              <option value="">All services</option>
+              <option value="relay-a">Relay A</option>
+              <option value="relay-b">Relay B</option>
+              <option value="relay-c">Relay C</option>
+              <option value="{{ receiver_id }}">Bob (receiver)</option>
+            </select>
+            <button type="button" class="btn ghost small" id="events-refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="card-sub">
+          Events contain outcomes and sanitised categories — never message text, keys, or packet contents.
+        </p>
+        <div class="table-wrap log-wrap">
+          <table class="table log-table">
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Service</th>
+                <th scope="col">Event</th>
+                <th scope="col">Status</th>
+                <th scope="col">Duration</th>
+                <th scope="col">Error category</th>
+              </tr>
+            </thead>
+            <tbody id="event-body">
+              <tr><td colspan="6" class="empty small">Loading events…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card danger-card">
+        <div class="card-head">
+          <h2 class="card-title">Reset the demo</h2>
+          <span class="badge danger">destructive</span>
+        </div>
+        <p class="card-sub">
+          Clears delivered messages, replay caches, and event logs for all four services. Keys are kept.
+        </p>
+        <div class="danger-actions">
+          <button type="button" class="btn danger" id="reset-button">Clear demo data</button>
+          <p class="micro" id="reset-result" role="status" aria-live="polite"></p>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>
+      <strong>OnionChat</strong> · educational onion routing demo ·
+      FastAPI + PyCryptodome · no third-party scripts or trackers.
+    </p>
+    <p class="micro">
+      This is a teaching project, not a production anonymity network. See the design trade-offs in
+      <button type="button" class="link" data-goto="learn">How it works</button>.
+    </p>
+  </footer>
+
+  <div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+  <!-- Guided tour -->
+  <div class="tour" id="tour" hidden>
+    <div class="tour-backdrop" data-tour-close></div>
+    <div class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title"
+         aria-describedby="tour-text">
+      <div class="tour-top">
+        <span class="tour-progress" id="tour-progress" aria-hidden="true"></span>
+        <button type="button" class="btn ghost small" id="tour-skip" data-tour-close>Skip tour</button>
+      </div>
+      <h2 class="tour-title" id="tour-title">Welcome to OnionChat</h2>
+      <p class="tour-text" id="tour-text"></p>
+      <div class="tour-actions">
+        <button type="button" class="btn ghost" id="tour-back">Back</button>
+        <button type="button" class="btn primary" id="tour-next">Next</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

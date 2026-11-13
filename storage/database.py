@@ -225,6 +225,27 @@ class Database:
             row = connection.execute(query, params).fetchone()
         return int(row["total"]) if row else 0
 
+    def recent_messages(self, *, receiver_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        query = "SELECT * FROM messages"
+        params: list[Any] = []
+        if receiver_id is not None:
+            query += " WHERE receiver_id = ?"
+            params.append(receiver_id)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, min(limit, 500)))
+        with self._session() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def clear_messages(self, *, receiver_id: str | None = None) -> int:
+        query = "DELETE FROM messages"
+        params: list[Any] = []
+        if receiver_id is not None:
+            query += " WHERE receiver_id = ?"
+            params.append(receiver_id)
+        with self._session() as connection:
+            return connection.execute(query, params).rowcount
+
     # ------------------------------------------------------------------
     # Replay protection
     # ------------------------------------------------------------------
@@ -282,6 +303,24 @@ class Database:
                 (relay_id,),
             ).fetchone()
         return int(row["total"]) if row else 0
+
+    def clear_events(self, *, service_id: str | None = None) -> int:
+        query = "DELETE FROM events"
+        params: list[Any] = []
+        if service_id is not None:
+            query += " WHERE service_id = ?"
+            params.append(service_id)
+        with self._session() as connection:
+            return connection.execute(query, params).rowcount
+
+    def clear_replays(self, *, relay_id: str | None = None) -> int:
+        query = "DELETE FROM replay_cache"
+        params: list[Any] = []
+        if relay_id is not None:
+            query += " WHERE relay_id = ?"
+            params.append(relay_id)
+        with self._session() as connection:
+            return connection.execute(query, params).rowcount
 
     def iter_events(self, *, service_id: str | None = None) -> Iterable[dict[str, Any]]:
         yield from self.recent_events(service_id=service_id, limit=500)

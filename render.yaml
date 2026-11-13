@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: onionchat-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ONIONCHAT_DATA_DIR
+        value: /app/data

@@ -17,6 +17,7 @@ from relay.router import (
     ForwardingError,
     InvalidPacketError,
     RelayError,
+    RelayObserver,
     RelayProcessor,
     RelayRole,
     ReplayDetectedError,
@@ -48,6 +49,7 @@ def create_relay_app(
     db: Database,
     forwarder: Forwarder,
     replay_ttl_seconds: int | None = None,
+    observer: RelayObserver | None = None,
 ) -> FastAPI:
     ttl = replay_ttl_seconds if replay_ttl_seconds is not None else settings.replay_ttl_seconds
     events = EventRecorder(db, service_id=relay_id, service_type="relay")
@@ -61,6 +63,7 @@ def create_relay_app(
         events=events,
         forwarder=forwarder,
         replay_ttl_seconds=ttl,
+        observer=observer,
     )
 
     @asynccontextmanager
