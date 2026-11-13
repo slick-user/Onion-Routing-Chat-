@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from config.settings import settings
 from crypto.keyring import KeyRingError
+from networking.traffic_policy import PacketTooLargeError
 from networking.transport import TransportError
 from web.runtime import ATTACK_NAMES, KeyActionThrottled, WebRuntime
 
@@ -21,6 +23,7 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
 MAX_MESSAGE_CHARS = 4000
+TRAFFIC_EXPERIMENT_COOLDOWN_SECONDS = 5.0
 
 ATTACK_INFO: dict[str, dict[str, Any]] = {
     "tamper": {
@@ -101,6 +104,12 @@ class KeyRequest(KeyServiceRequest):
     key_id: str = Field(min_length=1, max_length=64, pattern=KEY_ID_PATTERN)
 
 
+class TrafficAnalysisRequest(BaseModel):
+    senders: int = Field(default=6, ge=3, le=10)
+    rounds: int = Field(default=3, ge=1, le=5)
+    mix_delay_ms: int = Field(default=250, ge=0, le=1000)
+
+
 class RevokeRequest(KeyRequest):
     reason: str = Field(default="manual revocation", max_length=120)
 
@@ -135,6 +144,7 @@ def create_web_app(runtime: WebRuntime | None = None) -> FastAPI:
         ),
     )
     app.state.runtime = runtime
+    app.state.last_experiment = float("-inf")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.middleware("http")
@@ -220,6 +230,10 @@ def create_web_app(runtime: WebRuntime | None = None) -> FastAPI:
             result = await runtime.deliver(payload.message)
         except TransportError:
             raise HTTPException(status_code=502, detail="A relay was unavailable") from None
+        except PacketTooLargeError:
+            raise HTTPException(
+                status_code=400, detail="Message is too long to fit in one fixed-size cell"
+            ) from None
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="Could not construct the onion packet") from None
         return result
@@ -261,6 +275,29 @@ def create_web_app(runtime: WebRuntime | None = None) -> FastAPI:
             }
         )
         return result
+
+    # Traffic analysis (global passive observer)
+    @app.get("/api/traffic-policy")
+    async def traffic_policy() -> dict[str, Any]:
+        return runtime.policy.describe()
+
+    @app.post("/api/traffic-analysis")
+    async def traffic_analysis(payload: TrafficAnalysisRequest) -> dict[str, Any]:
+        # The experiment sends dozens of real onions, so limit how often it runs.
+        now = time.monotonic()
+        if now - app.state.last_experiment < TRAFFIC_EXPERIMENT_COOLDOWN_SECONDS:
+            raise HTTPException(
+                status_code=429, detail="The experiment is cooling down; try again shortly"
+            ) from None
+        app.state.last_experiment = now
+        try:
+            return await runtime.traffic_analysis(
+                senders=payload.senders,
+                rounds=payload.rounds,
+                mix_delay_ms=payload.mix_delay_ms,
+            )
+        except TransportError:
+            raise HTTPException(status_code=502, detail="A service was unavailable") from None
 
     # Key lifecycle
     @app.get("/api/keys")

@@ -1,19 +1,15 @@
-"""Per-request circuit tracing for the interactive demo.
+"""Per-request hop trace for the web demo.
 
-The relay and receiver services accept an optional observer callback.  The web
-layer installs a callback that appends sanitized hop metadata to a
-``ContextVar`` scoped to the current request, so a single ``POST /api/send``
-can render the whole journey without exposing plaintext or key material.
-
-The observer never runs for the production/CLI services because it defaults to
-``None`` and is only supplied by the web runtime.
+Relays report safe metadata (stage, sizes, timings) to an observer; this
+module collects it for the current request so the UI can show each hop.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Iterator
+from typing import Any
 
 _current: ContextVar[list[dict[str, Any]] | None] = ContextVar("onionchat_trace", default=None)
 

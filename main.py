@@ -83,6 +83,7 @@ def build_relay_app(relay_id: str):
         relay_id=relay_id,
         role=RelayRole(settings.relay_role(relay_id)),
         keyring=open_keyring(relay_id),
+        policy=settings.traffic_policy(),
         registry=build_registry(),
         db=Database(settings.database_path(relay_id)),
         forwarder=JsonForwarder(),
@@ -255,6 +256,7 @@ def _build_sender(entry_url: str | None = None) -> Sender:
         relay_path=relay_path,
         relay_public_keys={relay_id: rings[relay_id].active_public_key for relay_id in relay_path},
         relay_key_ids={relay_id: rings[relay_id].active_key_id for relay_id in relay_path},
+        policy=settings.traffic_policy(),
     )
 
 
@@ -404,6 +406,45 @@ def cmd_revoke_key(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_traffic_analysis(args: argparse.Namespace) -> int:
+    """Run the global-passive-observer experiment and print a table."""
+    import tempfile
+
+    from web.runtime import WebRuntime
+
+    with tempfile.TemporaryDirectory(prefix="onionchat-ta-") as tmp:
+        # Use the real keys, but a scratch database so Bob's inbox is untouched.
+        runtime = WebRuntime.build(db_dir=Path(tmp))
+
+        async def run() -> dict[str, Any]:
+            return await runtime.traffic_analysis(
+                senders=args.senders, rounds=args.rounds, mix_delay_ms=args.mix_delay_ms
+            )
+
+        result = asyncio.run(run())
+
+    print(
+        f"{result['senders']} users, {result['rounds']} rounds. A blind guess is right {result['random_guess']:.0%} of the time.\n"
+    )
+    print(f"{'Configuration':<28}{'Size attack':>13}{'Timing attack':>15}{'Latency':>11}{'Bytes/msg':>11}")
+    for row in result["scenarios"]:
+        print(
+            f"{row['title']:<28}{row['size_attack_accuracy']:>13.0%}{row['timing_attack_accuracy']:>15.0%}"
+            f"{row['avg_latency_ms']:>9.0f}ms{row['bytes_per_message']:>11}"
+        )
+    return 0
+
+
+def cmd_benchmark(args: argparse.Namespace) -> int:
+    from evaluation.benchmarks import RESULTS_DIR, run_benchmarks, to_markdown
+
+    results = run_benchmarks(quick=args.quick)
+    print()
+    print(to_markdown(results))
+    print(f"Saved to {RESULTS_DIR / 'benchmarks.md'} and benchmarks.json")
+    return 0
+
+
 # CLI
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OnionChat educational onion-routing demo")
@@ -470,6 +511,16 @@ def build_parser() -> argparse.ArgumentParser:
     revoke_parser.add_argument("--key-id", required=True)
     revoke_parser.add_argument("--reason", default="manual revocation")
     revoke_parser.set_defaults(func=cmd_revoke_key)
+
+    ta_parser = subparsers.add_parser("traffic-analysis", help="run the traffic-analysis attack experiment")
+    ta_parser.add_argument("--senders", type=int, default=6)
+    ta_parser.add_argument("--rounds", type=int, default=3)
+    ta_parser.add_argument("--mix-delay-ms", type=int, default=250)
+    ta_parser.set_defaults(func=cmd_traffic_analysis)
+
+    bench_parser = subparsers.add_parser("benchmark", help="measure security vs. usability trade-offs")
+    bench_parser.add_argument("--quick", action="store_true", help="smaller, faster run")
+    bench_parser.set_defaults(func=cmd_benchmark)
 
     return parser
 
