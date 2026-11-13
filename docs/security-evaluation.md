@@ -74,11 +74,31 @@ the plaintext or raw packet fields.
 | Replay resistance | Relay-local SHA-256 digest cache with TTL | Duplicate packet is rejected with 409 within the retention window. |
 | Randomness | `Crypto.Random.get_random_bytes` | Fresh keys/nonces from the library CSPRNG; nonces are not reused by construction. |
 | Key storage | PEM private keys, directory `0700`, files `0600` | Loader rejects overly permissive private-key files; metadata API exposes only fingerprint, key ID and mode. |
+| Key lifecycle | Per-service key ring: active → retired (grace) → expired, or → revoked | Relays/receiver resolve the private key by the layer's key ID and reject expired (`key_expired`) and revoked (`key_revoked`) keys before decryption. Expired/revoked private keys are destroyed. |
 
 Known cryptographic limitation: static RSA key transport provides **no forward
 secrecy**. If a relay or receiver private key is compromised later, recorded
-packets addressed to that key can be decrypted. A production design would add
-an ephemeral key agreement (for example, X25519) and rotate keys.
+packets addressed to that key can be decrypted. Key rotation **limits** this
+exposure to the packets sent during that key's lifetime, and destroying retired
+keys after the grace period means a later break-in cannot recover them. It does
+not replace true forward secrecy, which would need an ephemeral key agreement
+(for example, X25519) per circuit.
+
+### 3.1 Key lifecycle experiments
+
+Run from **Keys & logs → Key lifecycle** (or the CLI) against the real relays:
+
+| Experiment | Expected | Observed |
+|---|---|---|
+| Rotate Relay B, then send a normal message | Delivered with the new key | Delivered; trace shows Relay B decrypting with its `active` key |
+| Send a test onion with Relay B's old key during the grace period | Delivered | Delivered; trace shows `retired` key accepted |
+| Revoke Relay B's old key, send the same test onion again | Rejected at Relay B | Relay B rejects with `key_revoked`; entry returns 502; nothing reaches Bob |
+| Revoke Bob's active key | Replacement generated; old key rejected by Bob | New key active; test onion with the old key rejected by Bob with `key_revoked` |
+| Wait past the grace period after a rotation | Old key rejected | Rejected with `key_expired`; archived private key file deleted |
+
+**Trade-off:** a longer grace period loses fewer in-flight packets during
+rotation, but keeps an old key usable for longer if it was stolen. Revocation
+exists for that case: it skips the grace period entirely.
 
 ## 4. Web-layer security controls
 
@@ -125,6 +145,8 @@ and that the service filter and unknown-service rejection behave correctly.
 | No sender signatures | Keeps the crypto surface small | Bob cannot authenticate Alice; anyone with Bob's public key can send. |
 | SQLite | Zero-ops, easy inspection, adequate for a demo | Single-host; no distributed coordination or high throughput. |
 | Public Security Lab and reset | Makes the demo tangible and self-service | No auth/rate limiting; anyone who reaches the app can send, probe or clear data. |
+| Key-rotation grace period (default 120 s) | In-flight packets survive a rotation | A stolen retired key stays usable until the grace ends unless it is revoked. |
+| Public key-lifecycle controls | Rotation and revocation can be demonstrated live | Anyone who reaches the demo can rotate or revoke keys; a 2 s cooldown limits CPU abuse from RSA generation. |
 | Plaintext HTTP locally | Easy local development | Requires TLS/mTLS before any multi-host deployment. |
 
 ## 7. Residual risks and non-goals

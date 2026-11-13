@@ -1,7 +1,4 @@
-/* ==========================================================================
-   OnionChat interactive demo
-   Dark, dependency-free design. No external fonts, icons or stylesheets.
-   ========================================================================== */
+/* OnionChat styles: dark theme, no external fonts or libraries. */
 
 :root {
   color-scheme: dark;
@@ -140,9 +137,7 @@ a {
   top: 0;
 }
 
-/* --------------------------------------------------------------------------
-   Header and tabs
-   -------------------------------------------------------------------------- */
+/* Header and tabs */
 
 .topbar {
   display: flex;
@@ -306,9 +301,7 @@ a {
   color: var(--accent);
 }
 
-/* --------------------------------------------------------------------------
-   Layout primitives
-   -------------------------------------------------------------------------- */
+/* Layout primitives */
 
 .page {
   width: min(1240px, calc(100% - 32px));
@@ -457,9 +450,7 @@ h1 {
   font-size: 0.8rem;
 }
 
-/* --------------------------------------------------------------------------
-   Buttons and form controls
-   -------------------------------------------------------------------------- */
+/* Buttons and form controls */
 
 .btn {
   display: inline-flex;
@@ -573,9 +564,7 @@ h1 {
   font-size: 0.8rem;
 }
 
-/* --------------------------------------------------------------------------
-   Composer
-   -------------------------------------------------------------------------- */
+/* Composer */
 
 .circuit-layout {
   display: grid;
@@ -691,9 +680,7 @@ h1 {
   line-height: 1.8;
 }
 
-/* --------------------------------------------------------------------------
-   Circuit visualisation
-   -------------------------------------------------------------------------- */
+/* Circuit visualisation */
 
 .circuit-card {
   overflow: hidden;
@@ -1032,9 +1019,7 @@ h1 {
   transform: translate(-50%, -50%);
 }
 
-/* --------------------------------------------------------------------------
-   Hop inspector
-   -------------------------------------------------------------------------- */
+/* Hop inspector */
 
 .inspector-card {
   margin-top: 18px;
@@ -1170,9 +1155,7 @@ h1 {
   font-weight: 600;
 }
 
-/* --------------------------------------------------------------------------
-   Inbox
-   -------------------------------------------------------------------------- */
+/* Inbox */
 
 .inbox-card {
   margin-top: 18px;
@@ -1213,9 +1196,7 @@ h1 {
   overflow-wrap: anywhere;
 }
 
-/* --------------------------------------------------------------------------
-   Security lab
-   -------------------------------------------------------------------------- */
+/* Security lab */
 
 .lab-layout {
   display: grid;
@@ -1478,9 +1459,7 @@ h1 {
 .log-entry-code.is-blocked { color: var(--green); }
 .log-entry-code.is-bypassed { color: var(--red); }
 
-/* --------------------------------------------------------------------------
-   Learn
-   -------------------------------------------------------------------------- */
+/* Learn */
 
 .learn-grid {
   display: grid;
@@ -1630,9 +1609,7 @@ h1 {
   color: var(--text);
 }
 
-/* --------------------------------------------------------------------------
-   Tables and logs
-   -------------------------------------------------------------------------- */
+/* Tables and logs */
 
 .table-wrap {
   overflow-x: auto;
@@ -1760,9 +1737,7 @@ h1 {
   gap: 14px;
 }
 
-/* --------------------------------------------------------------------------
-   Tooltips
-   -------------------------------------------------------------------------- */
+/* Tooltips */
 
 .info {
   position: relative;
@@ -1835,9 +1810,7 @@ h1 {
   opacity: 1;
 }
 
-/* --------------------------------------------------------------------------
-   Toasts
-   -------------------------------------------------------------------------- */
+/* Toasts */
 
 .toasts {
   position: fixed;
@@ -1878,9 +1851,7 @@ h1 {
   to { opacity: 1; transform: none; }
 }
 
-/* --------------------------------------------------------------------------
-   Guided tour
-   -------------------------------------------------------------------------- */
+/* Guided tour */
 
 .tour {
   position: fixed;
@@ -1960,9 +1931,7 @@ h1 {
   border-radius: var(--radius-sm);
 }
 
-/* --------------------------------------------------------------------------
-   Footer
-   -------------------------------------------------------------------------- */
+/* Footer */
 
 .footer {
   width: min(1240px, calc(100% - 32px));
@@ -1981,9 +1950,7 @@ h1 {
   color: var(--muted);
 }
 
-/* --------------------------------------------------------------------------
-   Responsive
-   -------------------------------------------------------------------------- */
+/* Responsive */
 
 @media (max-width: 1080px) {
   .circuit-layout,
@@ -2167,5 +2134,99 @@ h1 {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* Key lifecycle card */
+.lifecycle-list {
+  display: grid;
+  gap: 18px;
+  margin-top: 14px;
+}
+
+.lifecycle-service {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  background: rgba(12, 21, 38, 0.55);
+}
+
+.lifecycle-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.lifecycle-title {
+  margin: 0;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.lifecycle-role {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.lifecycle-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.btn.danger-ghost {
+  color: #fda4af;
+  border-color: rgba(251, 113, 133, 0.35);
+}
+
+.btn.danger-ghost:hover:not(:disabled) {
+  background: rgba(251, 113, 133, 0.1);
+}
+
+.probe-result {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.probe-result.is-ok {
+  border-color: rgba(74, 222, 128, 0.35);
+}
+
+.probe-result.is-blocked {
+  border-color: rgba(251, 113, 133, 0.4);
+  background: var(--red-soft);
+}
+
+.probe-verdict {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.probe-steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.probe-steps .is-rejected {
+  color: #fda4af;
+}
+
+@media (max-width: 720px) {
+  .lifecycle-head {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

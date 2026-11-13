@@ -52,6 +52,7 @@ and single-port hosted demo. It is not a production anonymity analysis.
 | Error-based information leakage | Generic public errors; detailed categories only in sanitized internal events. |
 | Secret leakage in logs | No plaintext, keys, session keys, raw packets, IPs or URLs in events. |
 | Key file exposure | Private keys written `0600`, key directory `0700`, permissions tightened on load. |
+| Long-lived or stolen keys | Key rotation with a bounded grace period; retired keys expire and their private files are destroyed; compromised keys are revoked immediately and rejected by every hop (`key_revoked`). |
 | Slow/unavailable peer | Explicit HTTP timeouts, no redirects, graceful 502 responses. |
 | Unexpected crypto errors | Authentication failures fail closed; no partial acceptance. |
 | XSS / content injection in the UI | Jinja2 autoescaping; all dynamic values inserted with `textContent`, never `innerHTML`; CSP restricts scripts and styles to same-origin. |
@@ -66,7 +67,10 @@ and single-port hosted demo. It is not a production anonymity analysis.
 ## Residual risks
 
 - **No forward secrecy.** Static RSA-OAEP key transport means recorded traffic
-  can be decrypted if a long-term private key is later compromised.
+  can be decrypted if a private key is later compromised. Rotation narrows this
+  to traffic sent during that key's lifetime, but does not remove it.
+- **Grace-period window.** A retired key that was stolen remains usable until
+  its grace period ends unless an operator revokes it.
 - **Traffic analysis.** No cover traffic, padding, batching or timing
   obfuscation. Localhost timing reveals the circuit to an observer.
 - **Endpoint metadata.** The entry relay sees the sender's address; the exit

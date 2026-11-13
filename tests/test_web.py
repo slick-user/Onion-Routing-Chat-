@@ -78,9 +78,7 @@ def post(app, path: str, payload: dict | None = None) -> httpx.Response:
     return request(app, "POST", path, payload)
 
 
-# ---------------------------------------------------------------------------
 # Page and assets
-# ---------------------------------------------------------------------------
 def test_index_renders_interactive_ui_and_security_headers(web_app):
     response = get(web_app, "/")
     assert response.status_code == 200
@@ -137,9 +135,7 @@ def test_health_endpoint(web_app):
     assert data["relays"] == 3
 
 
-# ---------------------------------------------------------------------------
 # Sending and tracing
-# ---------------------------------------------------------------------------
 def test_send_returns_hop_trace_and_delivers_message(web_app):
     response = post(web_app, "/api/send", {"message": MESSAGE})
     assert response.status_code == 200
@@ -201,9 +197,7 @@ def test_empty_and_oversized_messages_are_rejected(web_app):
     assert too_long.status_code == 422
 
 
-# ---------------------------------------------------------------------------
 # Security lab
-# ---------------------------------------------------------------------------
 def test_every_attack_is_blocked_with_the_expected_status(web_app):
     for attack in ATTACK_NAMES:
         response = post(web_app, "/api/attack", {"attack": attack})
@@ -242,9 +236,7 @@ def test_unknown_attack_is_rejected(web_app):
     assert response.json()["detail"] == "Unknown attack"
 
 
-# ---------------------------------------------------------------------------
 # Keys, events and overview
-# ---------------------------------------------------------------------------
 def test_overview_exposes_only_public_key_metadata(web_app):
     post(web_app, "/api/send", {"message": MESSAGE})
     response = get(web_app, "/api/overview")
@@ -297,9 +289,7 @@ def test_events_are_aggregated_and_sanitized(web_app):
     assert unknown.status_code == 400
 
 
-# ---------------------------------------------------------------------------
 # Reset
-# ---------------------------------------------------------------------------
 def test_reset_clears_messages_events_and_replays(web_app):
     post(web_app, "/api/send", {"message": MESSAGE})
     post(web_app, "/api/attack", {"attack": "replay"})
