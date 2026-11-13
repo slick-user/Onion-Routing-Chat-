@@ -12,6 +12,7 @@ from fastapi import FastAPI, HTTPException
 from config.settings import settings
 from crypto.encryption import AuthenticationError, CryptoError, decrypt_message_e2e
 from crypto.keyring import KeyExpiredError, KeyRevokedError, KeyRing, UnknownKeyError
+from crypto.onion import canonical_json
 from networking.limits import BodySizeLimitMiddleware
 from networking.schemas import DeliveryResponse, E2EEnvelope, HealthResponse, ReceiverStatusResponse
 from observability.events import EventRecorder, EventStatus, EventType, safe_detail
@@ -98,7 +99,11 @@ def create_receiver_app(
     async def receive(envelope: E2EEnvelope) -> DeliveryResponse:
         started = time.perf_counter()
         events.emit(EventType.PACKET_RECEIVED)
-        _observe("received", recipient_key_id=envelope.recipient_key_id)
+        _observe(
+            "received",
+            recipient_key_id=envelope.recipient_key_id,
+            packet_bytes=len(canonical_json(envelope.model_dump())),
+        )
 
         def _reject_key(category: str) -> None:
             events.emit(

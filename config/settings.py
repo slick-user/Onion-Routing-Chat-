@@ -87,6 +87,12 @@ class Settings:
     # Key lifecycle: how long a rotated-out key is still accepted, and the
     # minimum gap between rotations/revocations triggered from the web demo.
     key_grace_seconds: int = field(default_factory=lambda: _env_int("ONIONCHAT_KEY_GRACE_SECONDS", 120))
+    # Padding and mixing. 18 KiB fits a 4000-character message in three layers.
+    padding_enabled: bool = field(
+        default_factory=lambda: _env("ONIONCHAT_PADDING", "1").lower() not in {"0", "false", "no", "off"}
+    )
+    cell_bytes: int = field(default_factory=lambda: _env_int("ONIONCHAT_CELL_BYTES", 18 * 1024))
+    mix_delay_ms: int = field(default_factory=lambda: _env_int("ONIONCHAT_MIX_DELAY_MS", 0))
     key_action_cooldown_seconds: float = field(
         default_factory=lambda: _env_float("ONIONCHAT_KEY_COOLDOWN_SECONDS", 2.0)
     )
@@ -115,6 +121,15 @@ class Settings:
         if relay_id not in mapping:
             raise KeyError(f"Unknown relay id: {relay_id}")
         return mapping[relay_id]
+
+    def traffic_policy(self):
+        """Build the padding/mixing policy described by these settings."""
+        from networking.traffic_policy import TrafficPolicy
+
+        return TrafficPolicy(
+            cell_bytes=self.cell_bytes if self.padding_enabled else None,
+            mix_delay_ms=max(0, self.mix_delay_ms),
+        )
 
     def default_key_id(self, service_id: str) -> str:
         """Key identifier used for the very first (pre-rotation) key of a service."""

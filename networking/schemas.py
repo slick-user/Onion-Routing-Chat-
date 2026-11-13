@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -12,11 +12,18 @@ def _b64ish(value: str) -> str:
         raise ValueError("must be a non-empty base64 string")
     if len(value) > settings.max_field_chars:
         raise ValueError("field too large")
-    # Allow standard base64 chars, padding, and URL-safe just in case; decoder will validate strictly later.
+    # Quick character check; the real base64 decode happens later.
     allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-")
     if any(c not in allowed for c in value):
         raise ValueError("invalid base64 characters")
     return value
+
+
+def _padding(value: str) -> str:
+    """Padding is optional filler (see networking/traffic_policy.py); empty is fine."""
+    if value == "":
+        return value
+    return _b64ish(value)
 
 
 class OnionEnvelope(BaseModel):
@@ -28,11 +35,19 @@ class OnionEnvelope(BaseModel):
     nonce: str = Field(min_length=1)
     ciphertext: str = Field(min_length=1)
     tag: str = Field(min_length=1)
+    # Random filler that makes every packet the same size on the wire.
+    # Not encrypted and not authenticated: it carries no information.
+    padding: str = ""
 
     @field_validator("wrapped_key", "nonce", "ciphertext", "tag")
     @classmethod
     def validate_b64_fields(cls, v: str) -> str:
         return _b64ish(v)
+
+    @field_validator("padding")
+    @classmethod
+    def validate_padding(cls, v: str) -> str:
+        return _padding(v)
 
 
 class E2EEnvelope(BaseModel):
@@ -44,11 +59,19 @@ class E2EEnvelope(BaseModel):
     nonce: str = Field(min_length=1)
     ciphertext: str = Field(min_length=1)
     tag: str = Field(min_length=1)
+    # Random filler that makes every packet the same size on the wire.
+    # Not encrypted and not authenticated: it carries no information.
+    padding: str = ""
 
     @field_validator("wrapped_key", "nonce", "ciphertext", "tag")
     @classmethod
     def validate_b64_fields(cls, v: str) -> str:
         return _b64ish(v)
+
+    @field_validator("padding")
+    @classmethod
+    def validate_padding(cls, v: str) -> str:
+        return _padding(v)
 
 
 class RelayInstruction(BaseModel):
@@ -74,7 +97,7 @@ class RelayRequest(BaseModel):
 class ReceiveRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sender_hint: Optional[str] = Field(default=None, max_length=128)
+    sender_hint: str | None = Field(default=None, max_length=128)
     message: E2EEnvelope
 
 
@@ -95,8 +118,8 @@ class RelayStatusResponse(BaseModel):
 
 class DeliveryResponse(BaseModel):
     status: str
-    detail: Optional[str] = None
-    message_id: Optional[int] = None
+    detail: str | None = None
+    message_id: int | None = None
 
 
 class ReceiverStatusResponse(BaseModel):
@@ -107,5 +130,5 @@ class ReceiverStatusResponse(BaseModel):
 
 class SendResult(BaseModel):
     status: str
-    detail: Optional[str] = None
-    response: Optional[dict[str, Any]] = None
+    detail: str | None = None
+    response: dict[str, Any] | None = None
