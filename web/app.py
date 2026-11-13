@@ -16,6 +16,7 @@ from config.settings import settings
 from crypto.keyring import KeyRingError
 from networking.traffic_policy import PacketTooLargeError
 from networking.transport import TransportError
+from web.chat import create_chat_router
 from web.runtime import ATTACK_NAMES, KeyActionThrottled, WebRuntime
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -146,6 +147,7 @@ def create_web_app(runtime: WebRuntime | None = None) -> FastAPI:
     app.state.runtime = runtime
     app.state.last_experiment = float("-inf")
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.include_router(create_chat_router(runtime))
 
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
