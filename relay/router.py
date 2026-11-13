@@ -21,6 +21,7 @@ from crypto.onion import (
     peel_layer,
 )
 from networking.schemas import ExitInstruction, OnionEnvelope, RelayInstruction
+from networking.traffic_policy import PacketTooLargeError, TrafficPolicy
 from networking.transport import TransportError, receive_url, relay_url
 from observability.events import EventRecorder, EventStatus, EventType, safe_detail
 from relay.registry import PeerRegistry, UnknownPeerError
@@ -79,6 +80,7 @@ class RelayProcessor:
         key_id: str | None = None,
         keyring: KeyRing | None = None,
         observer: RelayObserver | None = None,
+        policy: TrafficPolicy | None = None,
     ):
         if keyring is None:
             if private_key is None or key_id is None:
@@ -87,6 +89,8 @@ class RelayProcessor:
         self.relay_id = relay_id
         self.role = role
         self.keyring = keyring
+        # Padding / mixing rules (off unless the caller passes a policy).
+        self.policy = policy or TrafficPolicy()
         self.registry = registry
         self.db = db
         self.events = events
@@ -302,11 +306,13 @@ class RelayProcessor:
             self._observe("rejected", started, error_category="unknown_peer")
             raise InvalidPacketError("unknown next hop") from None
 
+        # Traffic-analysis defences: wait a random time, then re-pad the inner
+        # packet to the fixed cell size so it looks like every other packet.
+        mix_ms = await self.policy.mix()
+        outgoing = self._prepare(validated.envelope.model_dump(), started)
+
         try:
-            response = await self.forwarder.post_json(
-                relay_url(target_url),
-                validated.envelope.model_dump(),
-            )
+            response = await self.forwarder.post_json(relay_url(target_url), outgoing)
             if response.get("status") not in {"forwarded", "delivered"}:
                 raise TransportError("downstream did not accept the packet")
         except TransportError:
@@ -326,7 +332,13 @@ class RelayProcessor:
             duration_ms=duration,
             detail=safe_detail(role=self.role.value, hop=self.validated_hop(validated)),
         )
-        self._observe("forwarded", started, next_hop_id=validated.next_hop_id)
+        self._observe(
+            "forwarded",
+            started,
+            next_hop_id=validated.next_hop_id,
+            sent_bytes=len(canonical_json(outgoing)),
+            mix_delay_ms=round(mix_ms, 1),
+        )
         return RelayResult(
             status="forwarded",
             duration_ms=round(duration, 2),
@@ -348,11 +360,11 @@ class RelayProcessor:
             self._observe("rejected", started, error_category="unknown_peer")
             raise InvalidPacketError("unknown receiver") from None
 
+        mix_ms = await self.policy.mix()
+        outgoing = self._prepare(exit_instruction.message.model_dump(), started)
+
         try:
-            response = await self.forwarder.post_json(
-                receive_url(target_url),
-                exit_instruction.message.model_dump(),
-            )
+            response = await self.forwarder.post_json(receive_url(target_url), outgoing)
             if response.get("status") != "delivered":
                 raise TransportError("receiver did not confirm delivery")
         except TransportError:
@@ -370,13 +382,36 @@ class RelayProcessor:
         self.events.emit(
             EventType.DELIVERY_SUCCESS, duration_ms=duration, detail=safe_detail(role=self.role.value)
         )
-        self._observe("delivered", started, receiver_id=exit_instruction.receiver_id)
+        self._observe(
+            "delivered",
+            started,
+            receiver_id=exit_instruction.receiver_id,
+            sent_bytes=len(canonical_json(outgoing)),
+            mix_delay_ms=round(mix_ms, 1),
+        )
         return RelayResult(
             status="delivered",
             duration_ms=round(duration, 2),
             packet_digest=digest,
             next_hop=exit_instruction.receiver_id,
         )
+
+    def _prepare(self, packet: dict[str, Any], started: float) -> dict[str, Any]:
+        """Apply the padding policy to a packet that is about to be sent."""
+        try:
+            return self.policy.prepare_for_wire(packet)
+        except PacketTooLargeError:
+            # Cannot happen for packets the sender padded correctly, because
+            # inner packets are always smaller than the outer one.
+            self.events.emit(
+                EventType.VALIDATION_FAILURE,
+                status=EventStatus.REJECTED,
+                duration_ms=self._duration_ms(started),
+                error_category="cell_overflow",
+                detail=safe_detail(role=self.role.value),
+            )
+            self._observe("rejected", started, error_category="cell_overflow")
+            raise InvalidPacketError("packet does not fit in a cell") from None
 
     @staticmethod
     def validated_hop(instruction: RelayInstruction) -> str:

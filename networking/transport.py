@@ -14,14 +14,12 @@ class TransportError(Exception):
 
 
 class JsonForwarder:
-    """POST JSON to trusted registry endpoints.
-
-    URLs must already have been resolved through the local peer registry;
-    this class never accepts a URL from packet contents.
-    """
+    """Posts JSON to trusted registry URLs (never to URLs taken from a packet)."""
 
     def __init__(self, timeout_seconds: float | None = None):
-        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.request_timeout_seconds
+        self.timeout_seconds = (
+            timeout_seconds if timeout_seconds is not None else settings.request_timeout_seconds
+        )
 
     async def post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         timeout = httpx.Timeout(self.timeout_seconds)

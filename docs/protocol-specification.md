@@ -33,14 +33,20 @@ key identifier to the authenticated ciphertext.
   "wrapped_key": "<base64>",
   "nonce": "<base64, 12 bytes>",
   "ciphertext": "<base64>",
-  "tag": "<base64, 16 bytes>"
+  "tag": "<base64, 16 bytes>",
+  "padding": "<random base64 filler, optional>"
 }
 ```
 
 Rules:
 
 - `version` must be `1`.
-- `recipient_key_id` is a configured logical key identifier.
+- `recipient_key_id` names the key the layer is encrypted for. Relays accept
+  their active key and, during the grace period, a retired key; revoked and
+  expired keys are rejected (see `crypto/keyring.py`).
+- `padding` is random filler that brings every packet on the wire to exactly
+  the cell size (18,432 bytes by default). It is outside the encrypted part,
+  is regenerated at every hop, and carries no information.
 - All binary fields are standard Base64 and are validated before use.
 - Unknown JSON fields are rejected.
 - The total HTTP request body is limited to 256 KiB by default; individual
@@ -99,7 +105,8 @@ only a delivery status and message ID, never the plaintext.
 
 ## 8. Replay protection
 
-- Digest: `SHA-256(canonical_json(envelope))`.
+- Digest: `SHA-256(canonical_json(envelope without padding))`. Padding is left
+  out so a captured packet cannot be replayed with new padding.
 - Scope: one relay ID plus the digest.
 - Storage: SQLite table `replay_cache` with `first_seen` and `expires_at`.
 - Default retention: 300 seconds (configurable).

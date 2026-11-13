@@ -11,6 +11,7 @@ from config.settings import settings
 from crypto.keyring import KeyRing
 from networking.limits import BodySizeLimitMiddleware
 from networking.schemas import HealthResponse, OnionEnvelope, RelayStatusResponse
+from networking.traffic_policy import TrafficPolicy
 from observability.events import EventRecorder, EventStatus, EventType
 from relay.registry import PeerRegistry
 from relay.router import (
@@ -52,6 +53,7 @@ def create_relay_app(
     private_key: Any = None,
     key_id: str | None = None,
     keyring: KeyRing | None = None,
+    policy: TrafficPolicy | None = None,
 ) -> FastAPI:
     ttl = replay_ttl_seconds if replay_ttl_seconds is not None else settings.replay_ttl_seconds
     events = EventRecorder(db, service_id=relay_id, service_type="relay")
@@ -61,6 +63,7 @@ def create_relay_app(
         private_key=private_key,
         key_id=key_id,
         keyring=keyring,
+        policy=policy,
         registry=registry,
         db=db,
         events=events,

@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from Crypto.PublicKey import RSA
 from pydantic import ValidationError
 
 from crypto.encryption import (
+    PROTOCOL_VERSION,
     AuthenticationError,
     CryptoError,
-    PROTOCOL_VERSION,
     _b64decode,
     _b64encode,
     build_aad,
@@ -43,16 +44,16 @@ def canonical_json(payload: Any) -> bytes:
 
 
 def packet_digest(envelope: Mapping[str, Any] | OnionEnvelope) -> str:
-    """Relay-local replay digest of the exact packet envelope.
+    """Hash of a packet, used by the replay cache.
 
-    The digest is not a global packet identifier: it is scoped to a relay in
-    the replay database.  We hash the canonical envelope representation rather
-    than logging or storing the packet itself.
+    Padding is left out, otherwise an attacker could replay a packet with new padding.
     """
     if isinstance(envelope, OnionEnvelope):
         data = envelope.model_dump()
     else:
         data = dict(envelope)
+    # Ignore padding: it changes at every hop and must not let a replay through.
+    data.pop("padding", None)
     return hashlib.sha256(canonical_json(data)).hexdigest()
 
 
@@ -83,12 +84,7 @@ def peel_layer(
     private_key: RSA.RsaKey,
     expected_key_id: str,
 ) -> dict[str, Any]:
-    """Validate and decrypt exactly one onion layer.
-
-    Returns the decrypted routing instruction.  Raises ``InvalidLayerError``
-    for packets addressed to another relay and ``CryptoError`` subclasses for
-    malformed or unauthenticated data.
-    """
+    """Check and decrypt one onion layer and return its instruction."""
     try:
         parsed = envelope if isinstance(envelope, OnionEnvelope) else OnionEnvelope.model_validate(envelope)
     except ValidationError as exc:
@@ -143,11 +139,7 @@ def build_onion(
     relay_public_keys: Mapping[str, RSA.RsaKey],
     relay_key_ids: Mapping[str, str],
 ) -> dict[str, Any]:
-    """Build an onion packet from the inside out.
-
-    ``relay_path`` is ordered from entry to exit, e.g.
-    ``["relay-a", "relay-b", "relay-c"]``.
-    """
+    """Build an onion from the inside out (relay_path goes entry -> exit)."""
     path = list(relay_path)
     if not path:
         raise ValueError("relay path must not be empty")
@@ -183,7 +175,9 @@ def build_onion(
     return envelope
 
 
-def decrypt_e2e_from_exit(instruction: Mapping[str, Any], private_key: RSA.RsaKey, expected_key_id: str) -> bytes:
+def decrypt_e2e_from_exit(
+    instruction: Mapping[str, Any], private_key: RSA.RsaKey, expected_key_id: str
+) -> bytes:
     """Decrypt the receiver envelope (used by the receiver service/tests)."""
     message = instruction.get("message")
     if not isinstance(message, Mapping):
