@@ -1,9 +1,4 @@
-"""Interactive web frontend for the OnionChat educational demo.
-
-Serves a single-page UI, a small JSON API, and the four-service topology in
-one process (see :mod:`web.runtime`).  The page is intentionally dependency
-free on the client: plain HTML, CSS and JavaScript are served from ``web``.
-"""
+"""Web frontend: the single-page UI, JSON API and security headers."""
 
 from __future__ import annotations
 
@@ -17,8 +12,9 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from config.settings import settings
+from crypto.keyring import KeyRingError
 from networking.transport import TransportError
-from web.runtime import ATTACK_NAMES, WebRuntime
+from web.runtime import ATTACK_NAMES, KeyActionThrottled, WebRuntime
 
 BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
@@ -94,6 +90,21 @@ class AttackRequest(BaseModel):
     attack: str = Field(min_length=1, max_length=64)
 
 
+KEY_ID_PATTERN = r"^[a-z0-9][a-z0-9-]{0,63}$"
+
+
+class KeyServiceRequest(BaseModel):
+    service_id: str = Field(min_length=1, max_length=64, pattern=KEY_ID_PATTERN)
+
+
+class KeyRequest(KeyServiceRequest):
+    key_id: str = Field(min_length=1, max_length=64, pattern=KEY_ID_PATTERN)
+
+
+class RevokeRequest(KeyRequest):
+    reason: str = Field(default="manual revocation", max_length=120)
+
+
 def _security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -136,9 +147,7 @@ def create_web_app(runtime: WebRuntime | None = None) -> FastAPI:
         # Never expose internals to the browser.
         return JSONResponse(status_code=500, content={"detail": "Internal demo error"})
 
-    # ------------------------------------------------------------------
     # Pages
-    # ------------------------------------------------------------------
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
@@ -157,6 +166,7 @@ def create_web_app(runtime: WebRuntime | None = None) -> FastAPI:
                 "max_message_chars": MAX_MESSAGE_CHARS,
                 "max_packet_kib": settings.max_packet_bytes // 1024,
                 "replay_ttl_seconds": settings.replay_ttl_seconds,
+                "key_grace_seconds": settings.key_grace_seconds,
                 "attacks": [
                     {
                         "id": attack_id,
@@ -178,9 +188,7 @@ def create_web_app(runtime: WebRuntime | None = None) -> FastAPI:
             "receiver": settings.receiver.service_id,
         }
 
-    # ------------------------------------------------------------------
     # JSON API
-    # ------------------------------------------------------------------
     @app.get("/api/overview")
     async def overview() -> dict[str, Any]:
         receiver_db = runtime.dbs[runtime.receiver_id]
@@ -252,6 +260,46 @@ def create_web_app(runtime: WebRuntime | None = None) -> FastAPI:
                 "events": runtime.recent_events(limit=12),
             }
         )
+        return result
+
+    # Key lifecycle
+    @app.get("/api/keys")
+    async def keys() -> dict[str, Any]:
+        return {
+            "services": runtime.key_lifecycle(),
+            "grace_seconds": settings.key_grace_seconds,
+        }
+
+    @app.post("/api/keys/rotate")
+    async def rotate_key(payload: KeyServiceRequest) -> dict[str, Any]:
+        try:
+            result = await runtime.rotate_key(payload.service_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown service") from None
+        except KeyActionThrottled:
+            raise HTTPException(status_code=429, detail="Please wait a moment between key actions") from None
+        return {**result, "services": runtime.key_lifecycle()}
+
+    @app.post("/api/keys/revoke")
+    async def revoke_key(payload: RevokeRequest) -> dict[str, Any]:
+        reason = " ".join(payload.reason.split()) or "manual revocation"
+        try:
+            result = await runtime.revoke_key(payload.service_id, payload.key_id, reason)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Unknown service") from None
+        except KeyActionThrottled:
+            raise HTTPException(status_code=429, detail="Please wait a moment between key actions") from None
+        except KeyRingError as exc:
+            detail = "Key is already revoked" if "already" in str(exc) else "Unknown key"
+            raise HTTPException(status_code=409 if "already" in str(exc) else 404, detail=detail) from None
+        return {**result, "services": runtime.key_lifecycle()}
+
+    @app.post("/api/keys/probe")
+    async def probe_key(payload: KeyRequest) -> dict[str, Any]:
+        try:
+            result = await runtime.probe_key(payload.service_id, payload.key_id)
+        except (KeyError, KeyRingError):
+            raise HTTPException(status_code=404, detail="Unknown service or key") from None
         return result
 
     @app.post("/api/reset")

@@ -1,17 +1,14 @@
-"""In-process topology used by the hosted interactive demo.
+"""Runs all relays, the receiver and the mailbox in one process for the web demo.
 
-The CLI runs every relay and the receiver as separate processes/containers.
-Free hosting platforms generally expose a single web port, so the demo builds
-the same four FastAPI applications in one process and connects them through
-:class:`~networking.inprocess.InProcessNetwork`.  The services still exchange
-real HTTP requests (via ``httpx.ASGITransport``) and every relay still peels
-exactly one layer; nothing bypasses the relay/receiver code paths.
+Free hosting gives us one port, so the services are mounted in-process but
+still exchange real HTTP requests and each relay still peels one layer.
 """
 
 from __future__ import annotations
 
 import asyncio
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -22,15 +19,11 @@ from Crypto.PublicKey import RSA
 from client.receiver import create_receiver_app
 from client.sender import Sender
 from config.settings import settings
-from crypto.keys import (
-    generate_service_keys,
-    key_fingerprint,
-    load_private_key,
-    load_public_key,
-)
+from crypto.keyring import KeyRing
+from crypto.keys import generate_service_keys, key_fingerprint
 from crypto.onion import build_onion, canonical_json, peel_layer, seal_layer
 from networking.inprocess import InProcessNetwork
-from networking.transport import TransportError, receive_url, relay_url, status_url
+from networking.transport import TransportError, relay_url, status_url
 from relay.node import create_relay_app
 from relay.registry import PeerRegistry
 from relay.router import RelayRole
@@ -42,6 +35,11 @@ DEFAULT_MESSAGE = "Hello Bob! This is an OnionChat test."
 
 INTERNAL_RELAY_URLS: dict[str, str] = {relay_id: f"http://{relay_id}.internal" for relay_id in RELAY_IDS}
 INTERNAL_RECEIVER_URL = "http://receiver.internal"
+
+
+class KeyActionThrottled(Exception):
+    """Raised when key rotations/revocations are requested too quickly."""
+
 
 ATTACK_NAMES = (
     "tamper",
@@ -67,14 +65,15 @@ class WebRuntime:
     registry: PeerRegistry
     key_ids: dict[str, str]
     keys_dir: Path
-    # The demo is a single shared inbox and a single replay cache. Serialising
-    # sends and experiments keeps message IDs and replay observations stable
-    # when several browser sessions use the same instance.
+    keyrings: dict[str, KeyRing] = field(default_factory=dict)
+    key_bits: int = 3072
+    # -inf, not 0: time.monotonic() counts from boot and can be small on a
+    # freshly started server, which would wrongly throttle the first action.
+    last_key_action: float = float("-inf")
+    # One shared inbox and replay cache, so sends and experiments run one at a time.
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    # ------------------------------------------------------------------
     # Construction
-    # ------------------------------------------------------------------
     @classmethod
     def build(
         cls,
@@ -98,9 +97,7 @@ class WebRuntime:
 
         receiver_id = settings.receiver.service_id
         service_ids = list(RELAY_IDS) + [receiver_id]
-        key_ids = {
-            relay_id: settings.relay_key_ids[relay_id] for relay_id in RELAY_IDS
-        }
+        key_ids = {relay_id: settings.relay_key_ids[relay_id] for relay_id in RELAY_IDS}
         key_ids[receiver_id] = settings.receiver_key_id
 
         missing = [
@@ -120,29 +117,29 @@ class WebRuntime:
                 bits=key_bits,
             )
 
-        private_keys = {
-            service_id: load_private_key(keys_path / f"{service_id}_private.pem")
+        keyrings = {
+            service_id: KeyRing.open(
+                service_id,
+                keys_path,
+                default_key_id=key_ids[service_id],
+                grace_seconds=settings.key_grace_seconds,
+            )
             for service_id in service_ids
         }
-        public_keys = {
-            service_id: load_public_key(keys_path / f"{service_id}_public.pem")
-            for service_id in service_ids
-        }
+        private_keys = {service_id: ring.active_private_key for service_id, ring in keyrings.items()}
+        public_keys = {service_id: ring.active_public_key for service_id, ring in keyrings.items()}
+        key_ids = {service_id: ring.active_key_id for service_id, ring in keyrings.items()}
 
         registry = PeerRegistry(
             relay_urls=dict(INTERNAL_RELAY_URLS),
             receiver_urls={receiver_id: INTERNAL_RECEIVER_URL},
         )
         network = InProcessNetwork()
-        dbs = {
-            service_id: Database(db_path / f"{service_id}.db")
-            for service_id in service_ids
-        }
+        dbs = {service_id: Database(db_path / f"{service_id}.db") for service_id in service_ids}
 
         receiver_app = create_receiver_app(
             receiver_id=receiver_id,
-            private_key=private_keys[receiver_id],
-            key_id=key_ids[receiver_id],
+            keyring=keyrings[receiver_id],
             db=dbs[receiver_id],
             observer=record,
         )
@@ -153,8 +150,7 @@ class WebRuntime:
             relay_app = create_relay_app(
                 relay_id=relay_id,
                 role=RelayRole(settings.relay_role(relay_id)),
-                private_key=private_keys[relay_id],
-                key_id=key_ids[relay_id],
+                keyring=keyrings[relay_id],
                 registry=registry,
                 db=dbs[relay_id],
                 forwarder=network,
@@ -185,11 +181,11 @@ class WebRuntime:
             registry=registry,
             key_ids=key_ids,
             keys_dir=keys_path,
+            keyrings=keyrings,
+            key_bits=key_bits,
         )
 
-    # ------------------------------------------------------------------
     # Demo actions
-    # ------------------------------------------------------------------
     @property
     def receiver_id(self) -> str:
         return settings.receiver.service_id
@@ -222,6 +218,7 @@ class WebRuntime:
     async def deliver(self, message: str) -> dict[str, Any]:
         """Build an onion, run the circuit, and return a sanitized trace."""
         async with self.operation_lock:
+            self.sync_keys()
             packet = self.sender.build_packet(message)
             with capture() as trace:
                 response = await self.network.post_json(
@@ -239,6 +236,7 @@ class WebRuntime:
 
     async def run_attack(self, attack: str) -> dict[str, Any]:
         async with self.operation_lock:
+            self.sync_keys()
             return await self._run_attack(attack)
 
     async def _run_attack(self, attack: str) -> dict[str, Any]:
@@ -349,9 +347,7 @@ class WebRuntime:
 
         raise ValueError("unhandled attack")
 
-    # ------------------------------------------------------------------
     # Read-only views
-    # ------------------------------------------------------------------
     async def status_snapshot(self) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for relay_id in RELAY_IDS:
@@ -368,6 +364,7 @@ class WebRuntime:
         return results
 
     def key_metadata(self, keys_dir: str | Path | None = None) -> list[dict[str, Any]]:
+        self.sync_keys()
         keys_path = Path(keys_dir) if keys_dir is not None else self.keys_dir
         services = [
             *(("relay", relay_id, settings.relay_role(relay_id)) for relay_id in RELAY_IDS),
@@ -393,6 +390,118 @@ class WebRuntime:
             )
         return rows
 
+    # Key lifecycle
+    def sync_keys(self) -> None:
+        """Point the sender and helpers at every service's current key (after a rotation)."""
+        for service_id, ring in self.keyrings.items():
+            self.key_ids[service_id] = ring.active_key_id
+            self.public_keys[service_id] = ring.active_public_key
+            self.private_keys[service_id] = ring.active_private_key
+        self.sender.receiver_key_id = self.key_ids[self.receiver_id]
+        self.sender.receiver_public_key = self.public_keys[self.receiver_id]
+        self.sender.relay_key_ids = {relay_id: self.key_ids[relay_id] for relay_id in RELAY_IDS}
+        self.sender.relay_public_keys = {relay_id: self.public_keys[relay_id] for relay_id in RELAY_IDS}
+
+    def key_lifecycle(self) -> list[dict[str, Any]]:
+        services = [
+            *((relay_id, settings.relay_role(relay_id)) for relay_id in RELAY_IDS),
+            (self.receiver_id, "receiver"),
+        ]
+        return [
+            {
+                "service_id": service_id,
+                "role": role,
+                "active_key_id": self.keyrings[service_id].active_key_id,
+                "keys": self.keyrings[service_id].records(),
+            }
+            for service_id, role in services
+        ]
+
+    def _require_service(self, service_id: str) -> KeyRing:
+        if service_id not in self.keyrings:
+            raise KeyError("unknown service")
+        return self.keyrings[service_id]
+
+    def _throttle(self) -> None:
+        now = time.monotonic()
+        if now - self.last_key_action < settings.key_action_cooldown_seconds:
+            raise KeyActionThrottled("key actions are rate limited")
+        self.last_key_action = now
+
+    async def rotate_key(self, service_id: str) -> dict[str, Any]:
+        ring = self._require_service(service_id)
+        async with self.operation_lock:
+            self._throttle()
+            bits = self.public_keys[service_id].size_in_bits()
+            # RSA generation takes ~0.1-2 s; keep the event loop responsive.
+            new_key = await asyncio.to_thread(RSA.generate, bits)
+            record = ring.rotate_to(new_key)
+            self.sync_keys()
+            return {
+                "service_id": service_id,
+                "action": "rotated",
+                "active": record.to_public_dict(time.time()),
+                "grace_seconds": ring.grace_seconds,
+            }
+
+    async def revoke_key(self, service_id: str, key_id: str, reason: str) -> dict[str, Any]:
+        ring = self._require_service(service_id)
+        async with self.operation_lock:
+            self._throttle()
+            replacement = None
+            if ring.status_of(key_id) == "active":
+                bits = self.public_keys[service_id].size_in_bits()
+                replacement = await asyncio.to_thread(RSA.generate, bits)
+            result = ring.revoke(key_id, reason=reason, replacement=replacement)
+            self.sync_keys()
+            return {"service_id": service_id, "action": "revoked", **result}
+
+    async def probe_key(self, service_id: str, key_id: str) -> dict[str, Any]:
+        """Send a real onion that uses one specific key for one service.
+
+        Shows how each hop treats active, retired, expired and revoked keys.
+        """
+        ring = self._require_service(service_id)
+        async with self.operation_lock:
+            self.sync_keys()
+            key_status = ring.status_of(key_id)
+            if key_status is None:
+                raise KeyError("unknown key")
+            public_key = ring.public_key(key_id)
+            relay_keys = {relay_id: self.public_keys[relay_id] for relay_id in RELAY_IDS}
+            relay_ids = {relay_id: self.key_ids[relay_id] for relay_id in RELAY_IDS}
+            receiver_key = self.public_keys[self.receiver_id]
+            receiver_key_id = self.key_ids[self.receiver_id]
+            if service_id == self.receiver_id:
+                receiver_key, receiver_key_id = public_key, key_id
+            else:
+                relay_keys[service_id], relay_ids[service_id] = public_key, key_id
+
+            packet = build_onion(
+                message=f"Key probe for {key_id}",
+                receiver_id=self.receiver_id,
+                receiver_key_id=receiver_key_id,
+                receiver_public_key=receiver_key,
+                relay_path=list(RELAY_IDS),
+                relay_public_keys=relay_keys,
+                relay_key_ids=relay_ids,
+            )
+            with capture() as trace:
+                status_code, body = await self.submit_packet(packet)
+
+            rejection = next((event for event in trace if event.get("stage") == "rejected"), None)
+            return {
+                "service_id": service_id,
+                "key_id": key_id,
+                "key_status": key_status,
+                "status_code": status_code,
+                "delivered": status_code < 400,
+                "rejected_by": rejection.get("service_id") if rejection else None,
+                "error_category": rejection.get("error_category") if rejection else None,
+                "body": body,
+                "trace": trace,
+            }
+
     def recent_messages(self, *, limit: int = 20) -> list[dict[str, Any]]:
         return self.dbs[self.receiver_id].recent_messages(receiver_id=self.receiver_id, limit=limit)
 
@@ -415,10 +524,7 @@ class WebRuntime:
             "error_category",
             "detail",
         }
-        return [
-            {key: value for key, value in row.items() if key in allowed}
-            for row in rows[: max(1, limit)]
-        ]
+        return [{key: value for key, value in row.items() if key in allowed} for row in rows[: max(1, limit)]]
 
     def reset(self) -> dict[str, int]:
         counts = {"messages": 0, "events": 0, "replays": 0}
@@ -433,6 +539,7 @@ class WebRuntime:
 
 __all__ = [
     "ATTACK_NAMES",
+    "KeyActionThrottled",
     "DEFAULT_MESSAGE",
     "INTERNAL_RECEIVER_URL",
     "INTERNAL_RELAY_URLS",

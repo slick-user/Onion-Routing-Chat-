@@ -80,16 +80,16 @@ class Settings:
     request_timeout_seconds: float = field(
         default_factory=lambda: _env_float("ONIONCHAT_TIMEOUT_SECONDS", 10.0)
     )
-    max_packet_bytes: int = field(
-        default_factory=lambda: _env_int("ONIONCHAT_MAX_PACKET_BYTES", 256 * 1024)
-    )
-    max_field_chars: int = field(
-        default_factory=lambda: _env_int("ONIONCHAT_MAX_FIELD_CHARS", 200_000)
-    )
-    replay_ttl_seconds: int = field(
-        default_factory=lambda: _env_int("ONIONCHAT_REPLAY_TTL_SECONDS", 300)
-    )
+    max_packet_bytes: int = field(default_factory=lambda: _env_int("ONIONCHAT_MAX_PACKET_BYTES", 256 * 1024))
+    max_field_chars: int = field(default_factory=lambda: _env_int("ONIONCHAT_MAX_FIELD_CHARS", 200_000))
+    replay_ttl_seconds: int = field(default_factory=lambda: _env_int("ONIONCHAT_REPLAY_TTL_SECONDS", 300))
     db_path: Path = field(default_factory=lambda: DB_DIR / "onionchat.db")
+    # Key lifecycle: how long a rotated-out key is still accepted, and the
+    # minimum gap between rotations/revocations triggered from the web demo.
+    key_grace_seconds: int = field(default_factory=lambda: _env_int("ONIONCHAT_KEY_GRACE_SECONDS", 120))
+    key_action_cooldown_seconds: float = field(
+        default_factory=lambda: _env_float("ONIONCHAT_KEY_COOLDOWN_SECONDS", 2.0)
+    )
 
     def ensure_dirs(self) -> None:
         self.keys_dir.mkdir(parents=True, exist_ok=True)
@@ -115,6 +115,14 @@ class Settings:
         if relay_id not in mapping:
             raise KeyError(f"Unknown relay id: {relay_id}")
         return mapping[relay_id]
+
+    def default_key_id(self, service_id: str) -> str:
+        """Key identifier used for the very first (pre-rotation) key of a service."""
+        if service_id == self.receiver.service_id:
+            return self.receiver_key_id
+        if service_id in self.relay_key_ids:
+            return self.relay_key_ids[service_id]
+        raise KeyError(f"Unknown service id: {service_id}")
 
     def database_path(self, service_id: str) -> Path:
         return self.db_dir / f"{service_id}.db"

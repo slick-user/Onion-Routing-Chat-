@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+from config.settings import settings
 from crypto.encryption import (
     AuthenticationError,
     CryptoError,
@@ -24,7 +25,6 @@ from crypto.keys import (
     load_public_key,
     save_keypair,
 )
-from config.settings import settings
 
 
 def test_default_keypair_is_rsa_3072():

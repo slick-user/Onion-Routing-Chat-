@@ -1,20 +1,14 @@
-"""Authenticated encryption and key-wrapping primitives.
+"""AES-256-GCM encryption and RSA-OAEP key wrapping.
 
-Two independent encryption domains are used:
-
-* ``onion`` layers, one AES-256-GCM key per relay layer, wrapped with that
-  relay's RSA-OAEP public key.
-* ``e2e`` message encryption between sender and receiver, wrapped with the
-  receiver's RSA-OAEP public key.
-
-AES keys are never reused between the two domains.
+Onion layers and end-to-end messages each use their own fresh AES key.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Hash import SHA256
@@ -45,7 +39,7 @@ def generate_session_key() -> bytes:
 
 def build_aad(domain: str, version: int, key_id: str) -> bytes:
     """Bind protocol version, domain and recipient key id into the AEAD tag."""
-    return f"onionchat:{domain}:v{version}:{key_id}".encode("utf-8")
+    return f"onionchat:{domain}:v{version}:{key_id}".encode()
 
 
 def _b64encode(data: bytes) -> str:

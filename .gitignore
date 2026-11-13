@@ -36,3 +36,6 @@ logs/
 #Others
 notes.md
 onion-routing.pdf
+
+# Runtime data: generated keys, key-ring state and databases
+data/
