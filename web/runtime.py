@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 from Crypto.PublicKey import RSA
 
+from client.mailbox import MAILBOX_ID, ChatHub, create_mailbox_app
 from client.receiver import create_receiver_app
 from client.sender import Sender
 from config.settings import settings
@@ -28,6 +29,7 @@ from networking.transport import TransportError, relay_url, status_url
 from relay.node import create_relay_app
 from relay.registry import PeerRegistry
 from relay.router import RelayRole
+from storage.chat_store import ChatStore
 from storage.database import Database
 from web.trace import capture, record
 
@@ -36,6 +38,7 @@ DEFAULT_MESSAGE = "Hello Bob! This is an OnionChat test."
 
 INTERNAL_RELAY_URLS: dict[str, str] = {relay_id: f"http://{relay_id}.internal" for relay_id in RELAY_IDS}
 INTERNAL_RECEIVER_URL = "http://receiver.internal"
+INTERNAL_MAILBOX_URL = "http://mailbox.internal"
 
 
 class KeyActionThrottled(Exception):
@@ -73,6 +76,10 @@ class WebRuntime:
     last_key_action: float = float("-inf")
     # Shared by the sender and all relays (padding + mixing settings).
     policy: TrafficPolicy = field(default_factory=TrafficPolicy)
+    # Two-way chat (web/chat.py): public directory + encrypted mailboxes.
+    chat_store: ChatStore | None = None
+    chat_hub: ChatHub = field(default_factory=ChatHub)
+    mailbox_id: str = MAILBOX_ID
     # One shared inbox and replay cache, so sends and experiments run one at a time.
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -135,7 +142,7 @@ class WebRuntime:
 
         registry = PeerRegistry(
             relay_urls=dict(INTERNAL_RELAY_URLS),
-            receiver_urls={receiver_id: INTERNAL_RECEIVER_URL},
+            receiver_urls={receiver_id: INTERNAL_RECEIVER_URL, MAILBOX_ID: INTERNAL_MAILBOX_URL},
         )
         network = InProcessNetwork()
         policy = settings.traffic_policy()
@@ -148,6 +155,13 @@ class WebRuntime:
             observer=record,
         )
         network.register(INTERNAL_RECEIVER_URL, receiver_app)
+
+        # The chat mailbox is a second receiver behind the same exit relay.
+        chat_store = ChatStore(db_path / "chat.db")
+        chat_hub = ChatHub()
+        dbs[MAILBOX_ID] = Database(db_path / f"{MAILBOX_ID}.db")
+        mailbox_app = create_mailbox_app(store=chat_store, hub=chat_hub, db=dbs[MAILBOX_ID], observer=record)
+        network.register(INTERNAL_MAILBOX_URL, mailbox_app)
 
         apps: dict[str, Any] = {receiver_id: receiver_app}
         for relay_id in RELAY_IDS:
@@ -190,12 +204,25 @@ class WebRuntime:
             keyrings=keyrings,
             key_bits=key_bits,
             policy=policy,
+            chat_store=chat_store,
+            chat_hub=chat_hub,
         )
 
     # Demo actions
     @property
     def receiver_id(self) -> str:
         return settings.receiver.service_id
+
+    @property
+    def relay_ids(self) -> tuple[str, ...]:
+        return RELAY_IDS
+
+    async def submit_chat_packet(self, packet: dict[str, Any]) -> tuple[int, list[dict[str, Any]]]:
+        """Send a browser-built onion to Relay A and return (status, hop trace)."""
+        async with self.operation_lock:
+            with capture() as trace:
+                status_code, _ = await self.submit_packet(packet)
+        return status_code, trace
 
     def _entry_app(self, entry: str) -> tuple[str, Any]:
         if entry not in self.apps:
