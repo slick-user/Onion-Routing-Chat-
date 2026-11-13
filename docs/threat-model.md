@@ -41,6 +41,13 @@ and single-port hosted demo. It is not a production anonymity analysis.
    topology, where all four services and the web app share one address space
    and filesystem.
 
+9. **Curious or compromised web server (chat).** Runs the gateway, directory
+   and mailbox. Can see public keys, fixed-size ciphertext cells, which
+   mailbox receives mail and when. Cannot read messages: users' private keys
+   are generated and kept as non-extractable keys in their own browsers.
+10. **Malicious chat user.** Can register, send to anyone, try to read other
+    mailboxes, or claim a false name inside a message.
+
 ## Mitigations
 
 | Threat | Mitigation |
@@ -56,6 +63,10 @@ and single-port hosted demo. It is not a production anonymity analysis.
 | Key file exposure | Private keys written `0600`, key directory `0700`, permissions tightened on load. |
 | Hop position / message length leaking through packet size | Every packet on every link is padded to one fixed-size cell (`networking/traffic_policy.py`); padding is excluded from the replay digest. |
 | Sender–receiver linking by timing order | Optional random mixing delay at each relay; measured in the traffic-analysis experiment. |
+| Server reading chat messages | Browser-side E2E encryption (Web Crypto); private keys are non-extractable and never uploaded; the mailbox stores ciphertext only. Tests assert the plaintext is absent from the database, API responses and logs. |
+| Server linking chat sender to recipient | `/api/chat/send` requires no login; the sender's identity exists only inside the recipient's E2E layer. |
+| Reading someone else's mailbox | Per-user random 256-bit token, stored hashed, checked with `hmac.compare_digest` (constant time, no timing side channel); sent over the WebSocket body, not in URLs. |
+| Uploading a private key or weak key by mistake | Registration accepts only RSA public keys of 2048–4096 bits. |
 | Long-lived or stolen keys | Key rotation with a bounded grace period; retired keys expire and their private files are destroyed; compromised keys are revoked immediately and rejected by every hop (`key_revoked`). |
 | Slow/unavailable peer | Explicit HTTP timeouts, no redirects, graceful 502 responses. |
 | Unexpected crypto errors | Authentication failures fail closed; no partial acceptance. |
@@ -84,7 +95,15 @@ and single-port hosted demo. It is not a production anonymity analysis.
 - **Compromised relays.** A compromised entry and exit relay can correlate
   traffic. Onion routing does not protect against a global passive adversary.
 - **No sender authentication.** The receiver verifies ciphertext integrity,
-  not the sender's identity. Messages are not signed.
+  not the sender's identity. Messages are not signed, so a chat user can
+  claim another user's name inside a message. Adding signatures would need
+  care, since a signature would also prove authorship to anyone shown it.
+- **Directory trust.** Chat users trust the server's directory to hand out the
+  real public keys. A malicious server could substitute its own key for a
+  recipient (a man-in-the-middle); comparing key IDs out of band would detect
+  it. There is no key transparency log.
+- **Mailbox metadata.** The mailbox knows which user receives mail and when,
+  as any mail server does.
 - **Replay window.** Replays after the retention TTL are accepted.
 - **Plaintext at rest.** The receiver stores decrypted messages in local
   SQLite without at-rest encryption in this demonstration.

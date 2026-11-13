@@ -27,6 +27,10 @@ Alice ──▶ Relay A (entry) ──▶ Relay B (middle) ──▶ Relay C (ex
 | `crypto/keyring.py` | Per-service key rings: rotation, grace period, expiry, revocation. |
 | `networking/traffic_policy.py` | Fixed-size cell padding and random mixing delays shared by sender and relays. |
 | `adversary/traffic_analysis.py` | Simulated global passive observer with size and timing correlation attacks. |
+| `web/static/js/onion-client.js` | Browser "Tor client": Web Crypto key generation, E2E encryption, onion construction, padding, decryption. |
+| `web/chat.py` | Chat API: directory, registration, anonymous send, token-protected inbox, WebSocket push. |
+| `client/mailbox.py` | Receiver for chat traffic: stores ciphertext per user and notifies connected browsers. |
+| `storage/chat_store.py` | SQLite directory (public keys, hashed tokens) and encrypted mailboxes. |
 | `evaluation/benchmarks.py` | Key-size, padding and mixing measurements written to `docs/results/`. |
 | `networking/` | Strict Pydantic schemas, HTTPX transport, ASGI body-size middleware. |
 | `storage/database.py` | SQLite messages, operational events and replay cache. |
@@ -196,6 +200,63 @@ recipient key ID, next logical hop, packet byte count and error category. The
 web layer never records plaintext, nonces, wrapped keys, ciphertext or private
 keys.
 
+## Two-way chat (browser-side cryptography)
+
+The **Chat** tab is a real multi-user client. Unlike the Alice → Bob demo, all
+secret operations happen in the user's browser (`web/static/js/onion-client.js`,
+Web Crypto API), so the server is *untrusted for content*.
+
+| Component | Knows | Never knows |
+|---|---|---|
+| Browser (sender) | Its own private key, the recipient, the message, the full path | Other users' private keys |
+| Web server / `/api/chat/send` | That *some* packet arrived, its fixed size | Sender identity (no login on send), recipient, text |
+| Relay A | Previous hop (the gateway), next hop (Relay B) | Recipient, text |
+| Relay B | Relay A, Relay C | Sender, recipient, text |
+| Relay C | Relay B, that the packet goes to the mailbox | Sender, text |
+| Mailbox (`client/mailbox.py`) | Which user's key it is for, arrival time | Sender, text (stored as ciphertext) |
+| Browser (recipient) | Text and the sender's *claimed* name | — |
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor A as Alice's browser
+    participant S as Web server
+    participant RA as Relay A
+    participant RB as Relay B
+    participant RC as Relay C
+    participant M as Mailbox
+    actor B as Bob's browser
+
+    A->>S: GET /api/chat/directory
+    S-->>A: relay + user public keys, cell size
+    Note over A: encrypt for Bob (AES-256-GCM + RSA-OAEP)<br/>wrap layers C, B, A; pad to 18 432 B
+    A->>S: POST /api/chat/send (opaque cell)
+    S->>RA: forward unchanged
+    RA->>RB: peel layer A, re-pad
+    RB->>RC: peel layer B, re-pad
+    RC->>M: peel layer C, deliver E2E ciphertext
+    M->>M: store ciphertext in Bob's mailbox
+    M-->>B: WebSocket: new mail (ciphertext)
+    Note over B: decrypt with non-extractable private key
+    B->>S: reply: same steps, encrypted to Alice's public key
+```
+
+Key handling in the browser:
+
+- **Generation:** `crypto.subtle.generateKey` (RSA-OAEP 3072, SHA-256) with
+  `extractable: false`; only the public key is exported (SPKI PEM).
+- **Distribution:** the public key is registered in the directory
+  (`POST /api/chat/register`); everyone fetches the directory before sending,
+  which also picks up rotated relay keys.
+- **Storage:** the private `CryptoKey` object is kept in IndexedDB. Because it
+  is non-extractable, scripts can use it but cannot read or export it.
+- **Revocation:** "Leave & forget my keys" deletes the private key; the
+  mailbox token is per-tab and lives only in `sessionStorage`.
+
+The browser code is checked against the Python implementation by
+`tests/js/interop.mjs` (run from `tests/test_chat.py`): Node.js executes the
+exact browser file, and the Python relays must peel its onions.
+
 ## Trust boundaries
 
 1. **Sender → Relay A.** The sender knows the full circuit path and submits
@@ -207,7 +268,8 @@ keys.
    through the local registry; it forwards the E2E envelope without decrypting
    it.
 4. **Receiver.** Only the receiver holds the private key capable of decrypting
-   the E2E envelope.
+   the E2E envelope. In the chat, that is the recipient's browser; the
+   mailbox service stores ciphertext it cannot read.
 5. **Browser → web API.** The browser is untrusted. The API validates message
    length, JSON shapes and attack identifiers, applies security headers and
    CORS-less same-origin defaults, and returns only sanitised metadata.

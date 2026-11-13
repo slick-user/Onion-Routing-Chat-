@@ -9,6 +9,8 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%230b1020'/%3E%3Ccircle cx='32' cy='32' r='22' fill='none' stroke='%23f6a94a' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='13' fill='none' stroke='%2338d0c0' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='4' fill='%239b8cff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/css/app.css">
   <script src="/static/js/app.js" defer></script>
+  <script src="/static/js/onion-client.js" defer></script>
+  <script src="/static/js/chat.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -49,6 +51,10 @@
       <button type="button" class="tab" role="tab" id="tab-keys" data-tab="keys"
               aria-selected="false" aria-controls="panel-keys" tabindex="-1">
         <span class="tab-num" aria-hidden="true">04</span> Keys &amp; logs
+      </button>
+      <button type="button" class="tab" role="tab" id="tab-chat" data-tab="chat"
+              aria-selected="false" aria-controls="panel-chat" tabindex="-1">
+        <span class="tab-num" aria-hidden="true">05</span> Chat
       </button>
     </div>
   </nav>
@@ -603,6 +609,59 @@
           <p class="micro" id="reset-result" role="status" aria-live="polite"></p>
         </div>
       </article>
+    </section>
+    <!-- Chat -->
+    <section class="panel" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" tabindex="0" hidden>
+      <div class="panel-head">
+        <p class="eyebrow">Anonymous chat</p>
+        <h1>Chat through three relays</h1>
+        <p class="lede">
+          Your browser makes your keys, encrypts every message for the recipient, wraps it in three onion layers,
+          and pads it to one fixed-size cell. The server and relays only ever handle ciphertext.
+          To try it alone, open this page in a second tab as another user.
+        </p>
+      </div>
+
+      <article class="card" id="chat-join">
+        <h2 class="card-title">Join the chat</h2>
+        <p class="card-sub">
+          Joining creates an RSA-3072 key pair inside this browser tab with the Web Crypto API. The private key
+          is non-extractable: it cannot be exported, not even by this page, and is never sent to the server.
+          Only your public key and display name go into the directory.
+        </p>
+        <form id="chat-join-form" class="chat-join-form">
+          <label for="chat-name">Display name</label>
+          <input id="chat-name" class="input" maxlength="24" autocomplete="off" placeholder="e.g. Alice" required>
+          <button type="submit" class="btn primary" id="chat-join-button">Generate keys &amp; join</button>
+          <span class="micro" id="chat-join-status" role="status" aria-live="polite"></span>
+        </form>
+      </article>
+
+      <div class="chat-layout" id="chat-app" hidden>
+        <aside class="card chat-side">
+          <h2 class="card-title">You</h2>
+          <p class="chat-me" id="chat-me"></p>
+          <p class="micro" id="chat-me-key"></p>
+          <p class="micro"><span class="chat-dot" id="chat-live-dot"></span> <span id="chat-live">connecting…</span></p>
+          <h2 class="card-title chat-people-title">People</h2>
+          <ul class="chat-people" id="chat-people"></ul>
+          <button type="button" class="btn ghost small" id="chat-leave">Leave &amp; forget my keys</button>
+        </aside>
+
+        <section class="card chat-main" aria-live="polite">
+          <h2 class="card-title" id="chat-with">Pick someone to talk to</h2>
+          <ol class="chat-thread" id="chat-thread"></ol>
+          <form id="chat-form" class="chat-form">
+            <label class="sr-only" for="chat-input">Message</label>
+            <textarea id="chat-input" class="input" rows="2" maxlength="2000" placeholder="Write a message…" disabled></textarea>
+            <button type="submit" class="btn primary" id="chat-send" disabled>Encrypt &amp; send</button>
+          </form>
+          <div class="chat-proof" id="chat-proof" hidden>
+            <h3 class="subcard-title">What the network saw for your last message</h3>
+            <ol class="probe-steps" id="chat-proof-steps"></ol>
+          </div>
+        </section>
+      </div>
     </section>
   </main>
 

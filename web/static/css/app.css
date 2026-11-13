@@ -2247,3 +2247,134 @@ h1 {
 .mono {
   font-family: var(--mono);
 }
+
+/* Chat (functional styling; to be refined) */
+.chat-join-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.input {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font: inherit;
+}
+
+.chat-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) 1fr;
+  gap: 18px;
+}
+
+.chat-me {
+  font-weight: 600;
+  margin: 4px 0;
+}
+
+.chat-people-title {
+  margin-top: 18px;
+}
+
+.chat-people {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 16px;
+  display: grid;
+  gap: 4px;
+}
+
+.chat-people button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.chat-people button:hover,
+.chat-people button.is-active {
+  border-color: var(--line);
+  background: var(--panel-2);
+}
+
+.chat-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+  margin-right: 6px;
+}
+
+.chat-dot.is-online {
+  background: var(--green);
+}
+
+.chat-unread {
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 0.75rem;
+}
+
+.chat-thread {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 240px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.chat-bubble {
+  max-width: 75%;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-bubble.is-mine {
+  align-self: flex-end;
+  border-color: rgba(56, 208, 192, 0.4);
+}
+
+.chat-bubble .micro {
+  display: block;
+  margin-top: 2px;
+}
+
+.chat-form {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+
+.chat-form textarea {
+  flex: 1;
+  resize: vertical;
+}
+
+.chat-proof {
+  margin-top: 14px;
+}
+
+@media (max-width: 760px) {
+  .chat-layout {
+    grid-template-columns: 1fr;
+  }
+}
