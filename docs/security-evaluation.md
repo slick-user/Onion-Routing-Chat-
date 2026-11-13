@@ -155,6 +155,18 @@ every link shows the same size.
 single user on a quiet network is still easy to correlate. There is no cover
 traffic, and a long-term observer can still use intersection attacks.
 
+## 3.3 Two-way chat: end-to-end encryption in the browser
+
+| Claim | Evidence |
+|---|---|
+| The server never sees chat plaintext | `test_server_never_stores_or_returns_plaintext`: the secret text is absent from the send response, the SQLite file and all event logs. |
+| The mailbox cannot tell who sent a message | The stored envelope contains no sender id or name (same test). |
+| Browser and Python crypto are compatible | `test_browser_client_onion_is_accepted_by_python_relays` runs `onion-client.js` in Node.js; the Python relays peel its padded 18 432-byte onion and the recipient decrypts it, including non-ASCII text. The reverse direction (Python → browser decrypt) is checked too. |
+| Mailboxes are private | Wrong, missing or other users' tokens get HTTP 401; WebSocket logins with a bad token are closed. |
+| Live delivery works | `test_websocket_pushes_new_mail_and_rejects_bad_tokens` receives and decrypts a pushed message. |
+| Chat keeps working through key rotation | `test_chat_survives_relay_key_rotation`: the directory advertises the new relay key and messages still arrive. |
+| Registration is safe | Private keys, keys under 2048 bits and unsafe display names are refused. |
+
 ## 4. Web-layer security controls
 
 | Control | Evidence |
@@ -215,7 +227,8 @@ Explicitly **not** provided:
 - Cover traffic or batching. (Fixed-size cells and random mixing delays are
   implemented and measured; see §3.2.)
 - Forward secrecy or post-compromise security.
-- Sender authentication, signatures, accounts or reputation.
+- Sender authentication or signatures (chat names are self-claimed), key
+  transparency for the chat directory, accounts or reputation.
 - Malicious-relay detection, accountability or directory consensus.
 - Production key management (HSM/KMS), at-rest encryption, backups or
   multi-replica replay coordination.
