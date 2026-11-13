@@ -20,7 +20,9 @@ and single-port hosted demo. It is not a production anonymity analysis.
 ## Adversaries considered
 
 1. **Network observer on localhost or a compromised host.** Can observe HTTP
-   traffic between services and timing.
+   traffic between services and timing. Modelled explicitly as a *global
+   passive adversary* in `adversary/traffic_analysis.py`: it sees the size and
+   time of every packet on every link but cannot decrypt or modify them.
 2. **Compromised relay.** Can read its own configuration and private key,
    observe packets it handles, and deviate from the protocol.
 3. **Malicious sender/client.** Can submit malformed, oversized, replayed or
@@ -52,6 +54,8 @@ and single-port hosted demo. It is not a production anonymity analysis.
 | Error-based information leakage | Generic public errors; detailed categories only in sanitized internal events. |
 | Secret leakage in logs | No plaintext, keys, session keys, raw packets, IPs or URLs in events. |
 | Key file exposure | Private keys written `0600`, key directory `0700`, permissions tightened on load. |
+| Hop position / message length leaking through packet size | Every packet on every link is padded to one fixed-size cell (`networking/traffic_policy.py`); padding is excluded from the replay digest. |
+| Sender–receiver linking by timing order | Optional random mixing delay at each relay; measured in the traffic-analysis experiment. |
 | Long-lived or stolen keys | Key rotation with a bounded grace period; retired keys expire and their private files are destroyed; compromised keys are revoked immediately and rejected by every hop (`key_revoked`). |
 | Slow/unavailable peer | Explicit HTTP timeouts, no redirects, graceful 502 responses. |
 | Unexpected crypto errors | Authentication failures fail closed; no partial acceptance. |
@@ -71,8 +75,10 @@ and single-port hosted demo. It is not a production anonymity analysis.
   to traffic sent during that key's lifetime, but does not remove it.
 - **Grace-period window.** A retired key that was stolen remains usable until
   its grace period ends unless an operator revokes it.
-- **Traffic analysis.** No cover traffic, padding, batching or timing
-  obfuscation. Localhost timing reveals the circuit to an observer.
+- **Traffic analysis.** Fixed-size cells remove the size signal, and mixing
+  delays weaken (but do not remove) the timing signal, at a measured latency
+  cost. There is no cover traffic or batching, so a lone user on a quiet
+  network, or a long-term observer, can still correlate activity.
 - **Endpoint metadata.** The entry relay sees the sender's address; the exit
   relay sees the receiver endpoint. Correlation is possible.
 - **Compromised relays.** A compromised entry and exit relay can correlate

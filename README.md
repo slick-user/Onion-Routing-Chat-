@@ -36,6 +36,12 @@ the Security Lab. See [Interactive web demo](#interactive-web-demo).
 - Independent AES-256-GCM end-to-end encryption between sender and receiver.
 - Strict Pydantic packet validation and hard request-body limits.
 - Trusted local relay/receiver registry (no arbitrary next-hop URLs).
+- Traffic-analysis defences: every packet is padded to one fixed-size cell
+  (hides hop position and message length) and relays can add random mixing
+  delays (breaks first-in-first-out timing correlation).
+- A simulated global passive observer (`adversary/`) that measures how well
+  size and timing attacks link senders to Bob, with and without each defence.
+- Security-vs-usability benchmarks (`python main.py benchmark`).
 - Full key lifecycle per service: generation, rotation with a grace period,
   automatic expiry and immediate revocation, enforced by every relay and the
   receiver (see [Key lifecycle](#key-lifecycle)).
@@ -164,6 +170,37 @@ rotation or revocation made from another terminal takes effect without a
 restart. In the web UI, **Keys & logs → Key lifecycle** offers the same actions
 plus **Send test onion**, which builds a real packet using one specific key and
 shows which hop accepts or rejects it.
+
+## Traffic analysis and benchmarks
+
+Encryption hides *what* a packet says, but not *how big* it is or *when* it
+moves. `networking/traffic_policy.py` adds two defences:
+
+| Defence | Stops | Cost | Setting |
+|---|---|---|---|
+| Fixed-size cells (padding) | Telling the hop position or message length from packet size | Extra bandwidth | `ONIONCHAT_PADDING` (on), `ONIONCHAT_CELL_BYTES` (18432) |
+| Mixing delay | Matching packets by first-in, first-out order | Extra latency | `ONIONCHAT_MIX_DELAY_MS` (0 = off) |
+
+`adversary/traffic_analysis.py` simulates an observer who watches every link,
+then tries to link each message at Bob to its sender by size and by timing:
+
+```bash
+python main.py traffic-analysis       # or Security lab → Traffic analysis in the web UI
+python main.py benchmark              # writes docs/results/benchmarks.md and .json
+python main.py benchmark --quick      # faster, smaller run
+```
+
+Typical result (6 users; a blind guess is right 17% of the time):
+
+| Configuration | Size attack | Timing attack | Latency | Bytes per message |
+|---|---|---|---|---|
+| No defences | 100% | 100% | ~50 ms | ~15 KB |
+| Fixed-size cells | ≈ random | 100% | ~50 ms | 73.7 KB |
+| Cells + mixing (≤ 250 ms) | ≈ random | ≈ random | ~450 ms | 73.7 KB |
+
+The benchmark also measures how RSA key size (2048/3072/4096) affects speed,
+and how much latency each mixing delay costs. See
+[`docs/results/benchmarks.md`](docs/results/benchmarks.md).
 
 ## Running services individually
 
@@ -307,11 +344,13 @@ send trace, all seven attack experiments, event aggregation and sanitisation,
 key-metadata exposure, and reset behaviour. Key-lifecycle tests cover
 rotation, grace-period acceptance, expiry, revocation, cross-process reloads,
 file permissions, and rejection of stale keys by the real relays and receiver.
-The full suite is **75 tests**:
+Traffic-analysis tests cover exact cell sizes, replays with fresh padding,
+mixing delays, both attack functions, and the full three-configuration
+experiment. The full suite is **91 tests**:
 
 ```bash
 ./.venv/bin/python -m pytest -q
-# 75 passed
+# 91 passed
 ```
 
 ## Protocol summary
@@ -382,6 +421,8 @@ encryption.
 - Private-key files created with `0600` and loaded defensively.
 - Key rotation with a bounded grace period, automatic expiry, and immediate
   revocation; expired/revoked private keys are destroyed.
+- Fixed-size cells on every link (padding excluded from the replay digest) and
+  optional random mixing delays at each relay.
 - No plaintext, keys, session keys, raw packets, or client IPs in structured
   logs or event rows.
 
@@ -399,12 +440,18 @@ onionchat/
 ├── crypto/
 │   ├── keys.py            # RSA generation, PEM import/export, permissions
 │   ├── encryption.py      # AES-GCM, RSA-OAEP, E2E envelope helpers
-│   └── onion.py           # inside-out construction and layer peeling
+│   ├── onion.py           # inside-out construction and layer peeling
+│   └── keyring.py         # key rotation, grace period, expiry, revocation
 ├── networking/
 │   ├── schemas.py         # Pydantic packet/request/response models
 │   ├── transport.py       # HTTPX JSON forwarder with timeouts
 │   ├── limits.py          # ASGI body-size middleware
-│   └── inprocess.py       # shared ASGI network for demo/tests
+│   ├── traffic_policy.py  # fixed-size cells (padding) and mixing delays
+│   └── inprocess.py       # shared ASGI network for demo/tests (with wire taps)
+├── adversary/
+│   └── traffic_analysis.py # simulated network observer: size and timing attacks
+├── evaluation/
+│   └── benchmarks.py      # security vs. usability measurements
 ├── storage/
 │   └── database.py        # SQLite messages, events and replay cache
 ├── observability/
@@ -421,7 +468,7 @@ onionchat/
 │   └── static/            # vanilla CSS and JavaScript
 ├── tests/
 ├── data/                  # generated keys and SQLite databases (ignored)
-├── docs/
+├── docs/                  # design docs; results/ holds benchmark output
 ├── main.py                # unified CLI / development entry point
 ├── Dockerfile             # optional container image
 ├── docker-compose.yml     # optional five-service topology (4 services + web)
@@ -450,6 +497,8 @@ Defaults live in `config/settings.py`:
 - request timeout (10 s);
 - maximum request body (256 KiB) and field size;
 - replay retention (300 s);
+- padding on/off and cell size (`ONIONCHAT_PADDING`, `ONIONCHAT_CELL_BYTES`, default 18432);
+- maximum random mixing delay per relay (`ONIONCHAT_MIX_DELAY_MS`, default 0 = off);
 - key grace period after rotation (`ONIONCHAT_KEY_GRACE_SECONDS`, default 120 s);
 - minimum gap between web key actions (`ONIONCHAT_KEY_COOLDOWN_SECONDS`, default 2 s);
 - key and database directories.
@@ -482,8 +531,9 @@ For a production-like multi-host deployment you would additionally need to:
 
 ## Limitations
 
-- **Not Tor.** There is no cover traffic, traffic-analysis resistance,
-  circuit padding, guard selection, directory consensus, or onion service.
+- **Not Tor.** There is no cover traffic, guard selection, directory
+  consensus, or onion service. Fixed-size cells and mixing delays reduce
+  size and timing leaks but do not stop a long-term observer.
 - **No forward secrecy.** RSA-OAEP static key transport means compromise of a
   relay or receiver private key can expose recorded packets addressed to that
   key. The project intentionally documents this rather than claiming
@@ -493,7 +543,8 @@ For a production-like multi-host deployment you would additionally need to:
   valid encrypted message.
 - **Metadata leakage.** The entry relay sees the sender's network address and
   the exit relay sees the receiver endpoint. Timing correlation remains
-  possible.
+  possible unless mixing is enabled, and even then only when several messages
+  are in flight.
 - **Trusted local registry.** Relays are assumed to be configured correctly
   and to follow the protocol. There is no decentralized trust model.
 - **Localhost transport is plaintext HTTP.** Do not deploy this as-is across

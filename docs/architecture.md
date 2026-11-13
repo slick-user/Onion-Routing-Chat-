@@ -23,7 +23,11 @@ Alice ──▶ Relay A (entry) ──▶ Relay B (middle) ──▶ Relay C (ex
 | `client/receiver.py` | FastAPI receiver; validates the E2E envelope, authenticates/decrypts it, stores the message, emits events. |
 | `crypto/keys.py` | RSA-3072 generation, PEM import/export, secure private-key permissions. |
 | `crypto/encryption.py` | AES-256-GCM, RSA-OAEP-SHA-256, domain-separated AAD, E2E envelope helpers. |
-| `crypto/onion.py` | Layer sealing/peeling, instruction shapes, packet digest. |
+| `crypto/onion.py` | Layer sealing/peeling, instruction shapes, packet digest (ignores padding). |
+| `crypto/keyring.py` | Per-service key rings: rotation, grace period, expiry, revocation. |
+| `networking/traffic_policy.py` | Fixed-size cell padding and random mixing delays shared by sender and relays. |
+| `adversary/traffic_analysis.py` | Simulated global passive observer with size and timing correlation attacks. |
+| `evaluation/benchmarks.py` | Key-size, padding and mixing measurements written to `docs/results/`. |
 | `networking/` | Strict Pydantic schemas, HTTPX transport, ASGI body-size middleware. |
 | `storage/database.py` | SQLite messages, operational events and replay cache. |
 | `observability/` | JSON logs and structured event persistence. |

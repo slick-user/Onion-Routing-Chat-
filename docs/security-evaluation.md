@@ -100,6 +100,61 @@ Run from **Keys & logs → Key lifecycle** (or the CLI) against the real relays:
 rotation, but keeps an old key usable for longer if it was stolen. Revocation
 exists for that case: it skips the grace period entirely.
 
+## 3.2 Traffic analysis: global passive observer
+
+**Adversary.** Watches every link (Alice → A, A → B, B → C, C → Bob). It cannot
+decrypt, modify, drop or delay packets, but sees each packet's size and time.
+It also knows which user sent each packet into Relay A (their network address).
+**Goal:** link each message that reaches Bob to its sender.
+
+**Implementation.** `adversary/traffic_analysis.py` taps the in-process network
+(`InProcessNetwork.taps`), sends one message from each of six simulated users
+25 ms apart with different lengths, and runs two attacks:
+
+- *Size attack:* rank packets by size at both ends and pair them up.
+- *Timing attack:* assume first in, first out, and pair them up by time.
+
+A "referee" decrypts Bob's copy only to score the guesses; the attacks never
+see it. Run it from **Security lab → Traffic analysis** or
+`python main.py traffic-analysis`.
+
+**Defences.** `networking/traffic_policy.py`:
+
+- *Fixed-size cells:* every packet on every link is padded with random filler
+  to exactly 18 432 bytes (configurable). Padding sits outside the encrypted
+  part, is regenerated at each hop, and is excluded from the replay digest, so
+  re-padding a captured packet does not bypass replay protection (tested).
+- *Mixing:* each relay waits a random 0..*N* ms before forwarding, so packets
+  that are in flight together leave in a shuffled order.
+
+**Observed results** (6 users × 3 rounds, RSA-3072; a blind guess is right 17%
+of the time):
+
+| Configuration | Size attack | Timing attack | Avg latency | Bytes per message |
+|---|---|---|---|---|
+| No defences | 100% | 100% | ~45–70 ms | ~14–16 KB |
+| Fixed-size cells | ≈ random (6–33%) | 100% | ~45–65 ms | 73.7 KB |
+| Cells + mixing (≤ 250 ms per relay) | ≈ random | ≈ random (11–29%) | ~430–500 ms | 73.7 KB |
+
+Each defence stops one attack and not the other: padding removes the size
+signal but leaves the order intact; mixing breaks the order but costs latency.
+Without padding the packet also shrinks at every hop (≈ 4.4 → 2.8 → 1.6 →
+0.7 KB for a short message), which reveals the hop position; with padding
+every link shows the same size.
+
+**Trade-offs** (measured by `python main.py benchmark`, see
+[`results/benchmarks.md`](results/benchmarks.md)):
+
+- Padding costs 1.7× bandwidth for a 4000-character message and 7.8× for a
+  10-character one. A smaller cell would cost less but limit message length.
+- About 100 ms of mixing per relay already pushes the timing attack close to
+  random in this setup, while roughly quintupling latency. Real low-latency
+  networks like Tor choose *not* to mix for exactly this reason.
+
+**Limits.** Mixing only helps when several messages are in flight at once; a
+single user on a quiet network is still easy to correlate. There is no cover
+traffic, and a long-term observer can still use intersection attacks.
+
 ## 4. Web-layer security controls
 
 | Control | Evidence |
@@ -112,7 +167,7 @@ exists for that case: it skips the grace period entirely.
 | Browser attack surface | No CDN, no third-party scripts, no inline executable script, no `eval`, no external fonts. JSON-only APIs reduce classic form CSRF; there is no permissive CORS configuration. |
 | Error handling | Public handlers return generic messages (`Invalid onion packet`, `Internal demo error`); detailed categories stay in sanitised internal events. |
 | Forwarding safety | Packet contents may only carry logical IDs; the registry resolves them. The SSRF experiment confirms a URL is rejected without a request. |
-| Trace minimisation | Observers record service, role, stage, duration, recipient key ID, next logical hop, byte count and error category only. ContextVars isolate traces per request; observers cannot alter processing. |
+| Trace minimisation | Observers record service, role, stage, duration, recipient key ID, key status, next logical hop, byte counts, mixing delay and error category only. ContextVars isolate traces per request; observers cannot alter processing. |
 | Reset safety | Reset clears messages, event rows and replay entries only; it never touches key files. |
 
 The web tests also verify that all four services appear in aggregated events
@@ -145,6 +200,8 @@ and that the service filter and unknown-service rejection behave correctly.
 | No sender signatures | Keeps the crypto surface small | Bob cannot authenticate Alice; anyone with Bob's public key can send. |
 | SQLite | Zero-ops, easy inspection, adequate for a demo | Single-host; no distributed coordination or high throughput. |
 | Public Security Lab and reset | Makes the demo tangible and self-service | No auth/rate limiting; anyone who reaches the app can send, probe or clear data. |
+| Fixed-size cells (18 KiB) | Hides hop position and message length | 1.7–7.8× bandwidth; messages must fit in one cell. |
+| Optional mixing delay (default off) | Breaks first-in-first-out timing correlation | Hundreds of ms of extra latency; useless without concurrent traffic. |
 | Key-rotation grace period (default 120 s) | In-flight packets survive a rotation | A stolen retired key stays usable until the grace ends unless it is revoked. |
 | Public key-lifecycle controls | Rotation and revocation can be demonstrated live | Anyone who reaches the demo can rotate or revoke keys; a 2 s cooldown limits CPU abuse from RSA generation. |
 | Plaintext HTTP locally | Easy local development | Requires TLS/mTLS before any multi-host deployment. |
@@ -155,7 +212,8 @@ Explicitly **not** provided:
 
 - Tor-level anonymity, censorship resistance or protection from a global
   passive adversary.
-- Cover traffic, padding, fixed-size cells, batching or timing obfuscation.
+- Cover traffic or batching. (Fixed-size cells and random mixing delays are
+  implemented and measured; see §3.2.)
 - Forward secrecy or post-compromise security.
 - Sender authentication, signatures, accounts or reputation.
 - Malicious-relay detection, accountability or directory consensus.
