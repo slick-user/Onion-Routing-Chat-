@@ -1,0 +1,81 @@
+x-onionchat-env: &onionchat-env
+  ONIONCHAT_DATA_DIR: /app/data
+  RELAY_A_HOST: relay-a
+  RELAY_A_PORT: "8001"
+  RELAY_B_HOST: relay-b
+  RELAY_B_PORT: "8002"
+  RELAY_C_HOST: relay-c
+  RELAY_C_PORT: "8003"
+  RECEIVER_HOST: receiver
+  RECEIVER_PORT: "9000"
+
+x-onionchat-service: &onionchat-service
+  build: .
+  image: onionchat:local
+  restart: unless-stopped
+  environment: *onionchat-env
+  volumes:
+    - ./data/keys:/app/data/keys:ro
+
+services:
+  relay-a:
+    <<: *onionchat-service
+    command: ["run-relay", "--id", "relay-a", "--host", "0.0.0.0"]
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data/keys:/app/data/keys:ro
+      - relay_a_db:/app/data/db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  relay-b:
+    <<: *onionchat-service
+    command: ["run-relay", "--id", "relay-b", "--host", "0.0.0.0"]
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./data/keys:/app/data/keys:ro
+      - relay_b_db:/app/data/db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  relay-c:
+    <<: *onionchat-service
+    command: ["run-relay", "--id", "relay-c", "--host", "0.0.0.0"]
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./data/keys:/app/data/keys:ro
+      - relay_c_db:/app/data/db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  receiver:
+    <<: *onionchat-service
+    command: ["run-receiver", "--host", "0.0.0.0"]
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./data/keys:/app/data/keys:ro
+      - receiver_db:/app/data/db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  relay_a_db:
+  relay_b_db:
+  relay_c_db:
+  receiver_db:
