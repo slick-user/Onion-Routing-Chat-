@@ -33,11 +33,7 @@ class EventStatus(str, Enum):
 
 
 class EventRecorder:
-    """Persist and log an operational event.
-
-    Safety rules enforced by callers: never pass plaintext, keys, session
-    keys, raw packets, client IPs or sensitive routing details in ``detail``.
-    """
+    """Writes operational events to the log and the database."""
 
     def __init__(self, db: Database, *, service_id: str, service_type: str):
         self.db = db

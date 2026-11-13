@@ -12,7 +12,7 @@ from relay.node import create_relay_app
 from relay.registry import PeerRegistry
 from relay.router import RelayRole
 from storage.database import Database
-from tests.helpers import RELAY_BASE_URLS, RELAY_IDS, RECEIVER_BASE_URL, RECEIVER_ID, apost, aget
+from tests.helpers import RECEIVER_BASE_URL, RECEIVER_ID, RELAY_BASE_URLS, RELAY_IDS, aget, apost
 
 MESSAGE = "Hello Bob! This is an OnionChat test."
 REGISTRY = PeerRegistry(
@@ -47,7 +47,9 @@ def _onion(key_material, *, path=None, receiver_id=RECEIVER_ID):
     )
 
 
-def _make_app(key_material, tmp_path, forwarder, *, relay_id="relay-a", role=RelayRole.ENTRY, registry=REGISTRY):
+def _make_app(
+    key_material, tmp_path, forwarder, *, relay_id="relay-a", role=RelayRole.ENTRY, registry=REGISTRY
+):
     private_keys, _ = key_material
     db = Database(tmp_path / f"{relay_id}.db")
     app = create_relay_app(
@@ -250,10 +252,7 @@ def test_packet_supplied_url_is_not_forwarded(key_material, tmp_path):
 
     assert response.status_code == 400
     assert forwarder.calls == []
-    assert any(
-        event["error_category"] == "unknown_peer"
-        for event in db.recent_events(service_id="relay-a")
-    )
+    assert any(event["error_category"] == "unknown_peer" for event in db.recent_events(service_id="relay-a"))
 
 
 def test_replay_state_survives_relay_restart(key_material, tmp_path):

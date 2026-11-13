@@ -46,9 +46,12 @@ def test_expired_digest_can_be_reused(tmp_path):
     now = 1_000_000.0
     db.record_replay(relay_id="relay-a", packet_digest="reuse", ttl_seconds=10, now=now)
 
-    assert db.record_replay(
-        relay_id="relay-a",
-        packet_digest="reuse",
-        ttl_seconds=10,
-        now=now + 20,
-    ) is True
+    assert (
+        db.record_replay(
+            relay_id="relay-a",
+            packet_digest="reuse",
+            ttl_seconds=10,
+            now=now + 20,
+        )
+        is True
+    )

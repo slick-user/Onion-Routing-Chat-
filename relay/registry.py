@@ -1,14 +1,13 @@
-"""Locally configured allowlists for relay and receiver destinations.
+"""Trusted list of relay and receiver addresses.
 
-Incoming onion instructions contain logical peer identifiers only.  This
-registry maps those identifiers to trusted endpoints, preventing packets from
-turning relays into an SSRF proxy.
+Packets only contain logical ids like "relay-b"; this registry turns them
+into URLs, so a packet can never make a relay call an arbitrary address.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping
 from urllib.parse import urlsplit
 
 

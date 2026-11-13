@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from pydantic import ValidationError
 
 from crypto.encryption import AuthenticationError, CryptoError
+from crypto.keyring import KeyExpiredError, KeyRevokedError, KeyRing, UnknownKeyError
 from crypto.onion import (
     InvalidLayerError,
     OnionError,
@@ -68,19 +70,23 @@ class RelayProcessor:
         *,
         relay_id: str,
         role: RelayRole,
-        private_key: Any,
-        key_id: str,
         registry: PeerRegistry,
         db: Database,
         events: EventRecorder,
         forwarder: Forwarder,
         replay_ttl_seconds: int,
+        private_key: Any = None,
+        key_id: str | None = None,
+        keyring: KeyRing | None = None,
         observer: RelayObserver | None = None,
     ):
+        if keyring is None:
+            if private_key is None or key_id is None:
+                raise ValueError("a relay needs either a key ring or a private key and key id")
+            keyring = KeyRing.static(relay_id, key_id, private_key)
         self.relay_id = relay_id
         self.role = role
-        self.private_key = private_key
-        self.key_id = key_id
+        self.keyring = keyring
         self.registry = registry
         self.db = db
         self.events = events
@@ -102,9 +108,9 @@ class RelayProcessor:
 
         try:
             self._reject_replay(digest, started)
-            self._check_recipient(envelope, started)
-            instruction = self._decrypt(envelope, started)
-            role_kind = self._validate_instruction(instruction, started)
+            private_key, key_status = self._resolve_key(envelope, started)
+            instruction = self._decrypt(envelope, private_key, key_status, started)
+            role_kind = self._validate_instruction(instruction, started, key_status)
             self._record_acceptance(digest, started)
 
             if role_kind == "exit":
@@ -122,19 +128,12 @@ class RelayProcessor:
             )
             raise RelayError("internal relay error") from None
 
-    # ------------------------------------------------------------------
     @staticmethod
     def _duration_ms(started: float) -> float:
         return (time.perf_counter() - started) * 1000
 
     def _observe(self, stage: str, started: float, **fields: Any) -> None:
-        """Send sanitized hop metadata to an optional observer.
-
-        Observers are used by the interactive demo to visualise what each hop
-        can and cannot see.  They are best-effort: a failing observer must
-        never affect packet processing, and no plaintext or key material is
-        ever included here.
-        """
+        """Report safe hop metadata to the optional observer (never plaintext or keys)."""
         if self.observer is None:
             return
         try:
@@ -163,21 +162,40 @@ class RelayProcessor:
             self._observe("rejected", started, error_category="replay_detected")
             raise ReplayDetectedError("replayed packet")
 
-    def _check_recipient(self, envelope: OnionEnvelope, started: float) -> None:
-        if envelope.recipient_key_id != self.key_id:
-            self.events.emit(
-                EventType.VALIDATION_FAILURE,
-                status=EventStatus.REJECTED,
-                duration_ms=self._duration_ms(started),
-                error_category="key_mismatch",
-                detail=safe_detail(role=self.role.value),
-            )
-            self._observe("rejected", started, error_category="key_mismatch")
-            raise InvalidPacketError("packet is not addressed to this relay")
+    @property
+    def key_id(self) -> str:
+        """Identifier of the key currently advertised to senders."""
+        return self.keyring.active_key_id
 
-    def _decrypt(self, envelope: OnionEnvelope, started: float) -> dict[str, Any]:
+    def _reject_key(self, category: str, started: float, message: str) -> None:
+        self.events.emit(
+            EventType.VALIDATION_FAILURE,
+            status=EventStatus.REJECTED,
+            duration_ms=self._duration_ms(started),
+            error_category=category,
+            detail=safe_detail(role=self.role.value),
+        )
+        self._observe("rejected", started, error_category=category)
+        raise InvalidPacketError(message)
+
+    def _resolve_key(self, envelope: OnionEnvelope, started: float) -> tuple[Any, str]:
+        """Find the private key for this layer; reject unknown, expired or revoked keys."""
+        key_id = envelope.recipient_key_id
         try:
-            instruction = peel_layer(envelope, self.private_key, self.key_id)
+            private_key = self.keyring.resolve(key_id)
+        except KeyRevokedError:
+            self._reject_key("key_revoked", started, "packet uses a revoked key")
+        except KeyExpiredError:
+            self._reject_key("key_expired", started, "packet uses an expired key")
+        except UnknownKeyError:
+            self._reject_key("key_mismatch", started, "packet is not addressed to this relay")
+        return private_key, self.keyring.status_of(key_id) or "unknown"
+
+    def _decrypt(
+        self, envelope: OnionEnvelope, private_key: Any, key_status: str, started: float
+    ) -> dict[str, Any]:
+        try:
+            instruction = peel_layer(envelope, private_key, envelope.recipient_key_id)
         except AuthenticationError:
             self.events.emit(
                 EventType.AUTHENTICATION_FAILURE,
@@ -228,7 +246,9 @@ class RelayProcessor:
             self._observe("rejected", started, error_category="replay_detected")
             raise ReplayDetectedError("replayed packet")
 
-    def _validate_instruction(self, instruction: dict[str, Any], started: float) -> str:
+    def _validate_instruction(
+        self, instruction: dict[str, Any], started: float, key_status: str = "active"
+    ) -> str:
         try:
             kind = classify_instruction(instruction)
             if self.role == RelayRole.EXIT:
@@ -251,9 +271,21 @@ class RelayProcessor:
             raise InvalidPacketError("invalid routing instruction") from None
 
         if kind == "relay":
-            self._observe("decrypted", started, instruction="relay", next_hop_id=instruction["next_hop_id"])
+            self._observe(
+                "decrypted",
+                started,
+                instruction="relay",
+                next_hop_id=instruction["next_hop_id"],
+                key_status=key_status,
+            )
         else:
-            self._observe("decrypted", started, instruction="exit", receiver_id=instruction["receiver_id"])
+            self._observe(
+                "decrypted",
+                started,
+                instruction="exit",
+                receiver_id=instruction["receiver_id"],
+                key_status=key_status,
+            )
         return kind
 
     async def _forward(self, instruction: dict[str, Any], digest: str, started: float) -> RelayResult:
@@ -335,7 +367,9 @@ class RelayProcessor:
             raise ForwardingError("receiver unavailable") from None
 
         duration = (time.perf_counter() - started) * 1000
-        self.events.emit(EventType.DELIVERY_SUCCESS, duration_ms=duration, detail=safe_detail(role=self.role.value))
+        self.events.emit(
+            EventType.DELIVERY_SUCCESS, duration_ms=duration, detail=safe_detail(role=self.role.value)
+        )
         self._observe("delivered", started, receiver_id=exit_instruction.receiver_id)
         return RelayResult(
             status="delivered",

@@ -1,11 +1,13 @@
-"""OnionChat unified development entry point.
+"""OnionChat command-line entry point.
 
 Examples:
     python main.py init-keys
-    python main.py run-all
-    python main.py send --message "Hello Bob! This is an OnionChat test."
     python main.py demo
     python main.py web
+    python main.py keys
+    python main.py rotate-key --id relay-b
+    python main.py traffic-analysis
+    python main.py benchmark --quick
 """
 
 from __future__ import annotations
@@ -25,7 +27,8 @@ import uvicorn
 from client.receiver import create_receiver_app
 from client.sender import Sender
 from config.settings import BASE_DIR, settings
-from crypto.keys import KeyStoreError, generate_service_keys, load_private_key, load_public_key
+from crypto.keyring import KeyRing, KeyRingError, reset_keyring_files
+from crypto.keys import generate_service_keys
 from networking.transport import (
     JsonForwarder,
     TransportError,
@@ -39,12 +42,11 @@ from relay.router import RelayRole
 from storage.database import Database
 
 RELAY_IDS = ("relay-a", "relay-b", "relay-c")
+SERVICE_IDS = (*RELAY_IDS, settings.receiver.service_id)
 DEFAULT_MESSAGE = "Hello Bob! This is an OnionChat test."
 
 
-# ----------------------------------------------------------------------
 # Shared helpers
-# ----------------------------------------------------------------------
 def build_registry() -> PeerRegistry:
     return PeerRegistry(
         relay_urls={relay_id: settings.relay_endpoint(relay_id).base_url for relay_id in RELAY_IDS},
@@ -63,17 +65,24 @@ def _require_all_keys() -> None:
         _require_key(settings.public_key_path(service_id))
 
 
+def open_keyring(service_id: str) -> KeyRing:
+    """Open a service's key ring (bootstraps a manifest for pre-rotation key files)."""
+    _require_key(settings.private_key_path(service_id))
+    return KeyRing.open(
+        service_id,
+        settings.keys_dir,
+        default_key_id=settings.default_key_id(service_id),
+        grace_seconds=settings.key_grace_seconds,
+    )
+
+
 def build_relay_app(relay_id: str):
     if relay_id not in RELAY_IDS:
         raise SystemExit(f"Unknown relay id: {relay_id}")
-    private_path = settings.private_key_path(relay_id)
-    _require_key(private_path)
-    private_key = load_private_key(private_path)
     return create_relay_app(
         relay_id=relay_id,
         role=RelayRole(settings.relay_role(relay_id)),
-        private_key=private_key,
-        key_id=settings.relay_key_ids[relay_id],
+        keyring=open_keyring(relay_id),
         registry=build_registry(),
         db=Database(settings.database_path(relay_id)),
         forwarder=JsonForwarder(),
@@ -82,28 +91,28 @@ def build_relay_app(relay_id: str):
 
 def build_receiver_app():
     service_id = settings.receiver.service_id
-    private_path = settings.private_key_path(service_id)
-    _require_key(private_path)
     return create_receiver_app(
         receiver_id=service_id,
-        private_key=load_private_key(private_path),
-        key_id=settings.receiver_key_id,
+        keyring=open_keyring(service_id),
         db=Database(settings.database_path(service_id)),
     )
 
 
 def all_urls() -> list[str]:
-    return [settings.relay_endpoint(relay_id).base_url for relay_id in RELAY_IDS] + [settings.receiver.base_url]
+    return [settings.relay_endpoint(relay_id).base_url for relay_id in RELAY_IDS] + [
+        settings.receiver.base_url
+    ]
 
 
-# ----------------------------------------------------------------------
 # Commands
-# ----------------------------------------------------------------------
 def cmd_init_keys(args: argparse.Namespace) -> int:
     services = {
         **{relay_id: settings.relay_key_ids[relay_id] for relay_id in RELAY_IDS},
         settings.receiver.service_id: settings.receiver_key_id,
     }
+    if args.force:
+        for service_id in services:
+            reset_keyring_files(settings.keys_dir, service_id)
     try:
         results = generate_service_keys(settings.keys_dir, services, bits=args.bits, force=args.force)
     except ValueError as exc:
@@ -233,25 +242,19 @@ def cmd_run_all(args: argparse.Namespace) -> int:
 
 
 def _build_sender(entry_url: str | None = None) -> Sender:
+    """Build the sender from the *currently active* key of every service."""
     relay_path = list(RELAY_IDS)
-    relay_public_keys = {}
-    for relay_id in relay_path:
-        path = settings.public_key_path(relay_id)
-        _require_key(path)
-        relay_public_keys[relay_id] = load_public_key(path)
-
-    receiver_public_path = settings.public_key_path(settings.receiver.service_id)
-    _require_key(receiver_public_path)
-    receiver_public_key = load_public_key(receiver_public_path)
+    rings = {service_id: open_keyring(service_id) for service_id in SERVICE_IDS}
+    receiver_ring = rings[settings.receiver.service_id]
 
     return Sender(
         entry_relay_url=entry_url or settings.relay_a.base_url,
         receiver_id=settings.receiver.service_id,
-        receiver_key_id=settings.receiver_key_id,
-        receiver_public_key=receiver_public_key,
+        receiver_key_id=receiver_ring.active_key_id,
+        receiver_public_key=receiver_ring.active_public_key,
         relay_path=relay_path,
-        relay_public_keys=relay_public_keys,
-        relay_key_ids={relay_id: settings.relay_key_ids[relay_id] for relay_id in relay_path},
+        relay_public_keys={relay_id: rings[relay_id].active_public_key for relay_id in relay_path},
+        relay_key_ids={relay_id: rings[relay_id].active_key_id for relay_id in relay_path},
     )
 
 
@@ -339,16 +342,69 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_events(args: argparse.Namespace) -> int:
     service_id = args.service
-    db_path = settings.database_path(service_id) if service_id else settings.database_path(settings.receiver.service_id)
+    db_path = (
+        settings.database_path(service_id)
+        if service_id
+        else settings.database_path(settings.receiver.service_id)
+    )
     db = Database(db_path)
     events = db.recent_events(service_id=service_id, limit=args.limit)
     print(json.dumps(events, indent=2))
     return 0
 
 
-# ----------------------------------------------------------------------
+def _format_time(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(value))
+
+
+def _print_ring(service_id: str, ring: KeyRing) -> None:
+    print(f"{service_id}:")
+    for record in ring.records():
+        extra = ""
+        if record["status"] == "retired":
+            extra = f" (accepted for {record['grace_remaining_seconds']}s more)"
+        elif record["status"] == "revoked":
+            extra = f" (reason: {record['reason']})"
+        print(
+            f"  {record['status']:<8} {record['key_id']:<24} fp={record['fingerprint']} "
+            f"created={_format_time(record['created_at'])}{extra}"
+        )
+
+
+def cmd_keys(args: argparse.Namespace) -> int:
+    for service_id in SERVICE_IDS:
+        _print_ring(service_id, open_keyring(service_id))
+    return 0
+
+
+def cmd_rotate_key(args: argparse.Namespace) -> int:
+    ring = open_keyring(args.id)
+    record = ring.rotate(bits=args.bits)
+    print(f"Rotated {args.id}: new active key {record.key_id} (fp={record.fingerprint}).")
+    print(
+        f"The previous key stays valid for {settings.key_grace_seconds}s so in-flight packets still arrive."
+    )
+    _print_ring(args.id, ring)
+    return 0
+
+
+def cmd_revoke_key(args: argparse.Namespace) -> int:
+    ring = open_keyring(args.id)
+    try:
+        result = ring.revoke(args.key_id, reason=args.reason)
+    except KeyRingError as exc:
+        print(f"Revocation failed: {exc}", file=sys.stderr)
+        return 2
+    print(f"Revoked {args.key_id}. Packets addressed to it are now rejected; its private key was destroyed.")
+    if result["replacement"]:
+        print(f"It was the active key, so {result['replacement']['key_id']} was generated as a replacement.")
+    _print_ring(args.id, ring)
+    return 0
+
+
 # CLI
-# ----------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="OnionChat educational onion-routing demo")
     parser.add_argument("--log-level", default="INFO")
@@ -396,6 +452,24 @@ def build_parser() -> argparse.ArgumentParser:
     events_parser.add_argument("--service", default=None)
     events_parser.add_argument("--limit", type=int, default=30)
     events_parser.set_defaults(func=cmd_events)
+
+    keys_parser = subparsers.add_parser("keys", help="list every service's key ring")
+    keys_parser.set_defaults(func=cmd_keys)
+
+    rotate_parser = subparsers.add_parser(
+        "rotate-key", help="rotate a service's key (old key enters a grace period)"
+    )
+    rotate_parser.add_argument("--id", required=True, choices=list(SERVICE_IDS))
+    rotate_parser.add_argument("--bits", type=int, default=None)
+    rotate_parser.set_defaults(func=cmd_rotate_key)
+
+    revoke_parser = subparsers.add_parser(
+        "revoke-key", help="revoke a key immediately (e.g. after compromise)"
+    )
+    revoke_parser.add_argument("--id", required=True, choices=list(SERVICE_IDS))
+    revoke_parser.add_argument("--key-id", required=True)
+    revoke_parser.add_argument("--reason", default="manual revocation")
+    revoke_parser.set_defaults(func=cmd_revoke_key)
 
     return parser
 

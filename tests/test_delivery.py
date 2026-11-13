@@ -29,12 +29,18 @@ def test_end_to_end_delivery_through_three_relays(stack):
     assert latest["message"] == MESSAGE
 
     for relay_id in ("relay-a", "relay-b"):
-        assert stack["dbs"][relay_id].count_events(
-            service_id=relay_id, event_type=EventType.PACKET_FORWARDED.value
-        ) == 1
-    assert stack["dbs"]["relay-c"].count_events(
-        service_id="relay-c", event_type=EventType.DELIVERY_SUCCESS.value
-    ) == 1
+        assert (
+            stack["dbs"][relay_id].count_events(
+                service_id=relay_id, event_type=EventType.PACKET_FORWARDED.value
+            )
+            == 1
+        )
+    assert (
+        stack["dbs"]["relay-c"].count_events(
+            service_id="relay-c", event_type=EventType.DELIVERY_SUCCESS.value
+        )
+        == 1
+    )
     assert stack["dbs"][RECEIVER_ID].count_messages(receiver_id=RECEIVER_ID) == 1
 
 
@@ -88,9 +94,12 @@ def test_tampered_packet_is_rejected_end_to_end(stack):
     response = asyncio.run(apost(stack["apps"]["relay-a"], "/relay", tampered))
     assert response.status_code == 400
     assert stack["dbs"][RECEIVER_ID].count_messages(receiver_id=RECEIVER_ID) == 0
-    assert stack["dbs"]["relay-a"].count_events(
-        service_id="relay-a", event_type=EventType.AUTHENTICATION_FAILURE.value
-    ) == 1
+    assert (
+        stack["dbs"]["relay-a"].count_events(
+            service_id="relay-a", event_type=EventType.AUTHENTICATION_FAILURE.value
+        )
+        == 1
+    )
 
 
 def test_replayed_packet_is_rejected_end_to_end(stack):
@@ -103,9 +112,10 @@ def test_replayed_packet_is_rejected_end_to_end(stack):
     assert first.status_code == 200
     assert second.status_code == 409
     assert stack["dbs"][RECEIVER_ID].count_messages(receiver_id=RECEIVER_ID) == 1
-    assert stack["dbs"]["relay-a"].count_events(
-        service_id="relay-a", event_type=EventType.REPLAY_DETECTED.value
-    ) == 1
+    assert (
+        stack["dbs"]["relay-a"].count_events(service_id="relay-a", event_type=EventType.REPLAY_DETECTED.value)
+        == 1
+    )
 
 
 def test_receiver_rejects_tampered_end_to_end_envelope(stack):
@@ -126,9 +136,12 @@ def test_receiver_rejects_tampered_end_to_end_envelope(stack):
     response = asyncio.run(apost(stack["apps"][RECEIVER_ID], "/receive", e2e))
     assert response.status_code == 400
     assert stack["dbs"][RECEIVER_ID].count_messages(receiver_id=RECEIVER_ID) == 0
-    assert stack["dbs"][RECEIVER_ID].count_events(
-        service_id=RECEIVER_ID, event_type=EventType.AUTHENTICATION_FAILURE.value
-    ) == 1
+    assert (
+        stack["dbs"][RECEIVER_ID].count_events(
+            service_id=RECEIVER_ID, event_type=EventType.AUTHENTICATION_FAILURE.value
+        )
+        == 1
+    )
 
 
 def test_sender_reports_unavailable_entry_relay(stack):

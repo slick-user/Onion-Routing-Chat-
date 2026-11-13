@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from typing import Any, Callable
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
 from config.settings import settings
 from crypto.encryption import AuthenticationError, CryptoError, decrypt_message_e2e
+from crypto.keyring import KeyExpiredError, KeyRevokedError, KeyRing, UnknownKeyError
 from networking.limits import BodySizeLimitMiddleware
 from networking.schemas import DeliveryResponse, E2EEnvelope, HealthResponse, ReceiverStatusResponse
 from observability.events import EventRecorder, EventStatus, EventType, safe_detail
@@ -19,11 +21,16 @@ from storage.database import Database
 def create_receiver_app(
     *,
     receiver_id: str,
-    private_key: Any,
-    key_id: str,
     db: Database,
+    private_key: Any = None,
+    key_id: str | None = None,
+    keyring: KeyRing | None = None,
     observer: Callable[[dict[str, Any]], None] | None = None,
 ) -> FastAPI:
+    if keyring is None:
+        if private_key is None or key_id is None:
+            raise ValueError("the receiver needs either a key ring or a private key and key id")
+        keyring = KeyRing.static(receiver_id, key_id, private_key)
     events = EventRecorder(db, service_id=receiver_id, service_type="receiver")
 
     def _observe(stage: str, **fields: Any) -> None:
@@ -56,6 +63,7 @@ def create_receiver_app(
         lifespan=lifespan,
     )
     app.state.receiver_id = receiver_id
+    app.state.keyring = keyring
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_packet_bytes)
 
     @app.get("/health", response_model=HealthResponse)
@@ -92,20 +100,30 @@ def create_receiver_app(
         events.emit(EventType.PACKET_RECEIVED)
         _observe("received", recipient_key_id=envelope.recipient_key_id)
 
-        if envelope.recipient_key_id != key_id:
+        def _reject_key(category: str) -> None:
             events.emit(
                 EventType.VALIDATION_FAILURE,
                 status=EventStatus.REJECTED,
                 duration_ms=(time.perf_counter() - started) * 1000,
-                error_category="key_mismatch",
+                error_category=category,
             )
-            _observe("rejected", error_category="key_mismatch")
+            _observe("rejected", error_category=category)
             raise HTTPException(status_code=400, detail="Invalid message envelope")
+
+        try:
+            private_key = keyring.resolve(envelope.recipient_key_id)
+        except KeyRevokedError:
+            _reject_key("key_revoked")
+        except KeyExpiredError:
+            _reject_key("key_expired")
+        except UnknownKeyError:
+            _reject_key("key_mismatch")
+        key_status = keyring.status_of(envelope.recipient_key_id) or "unknown"
 
         events.emit(EventType.VALIDATION_SUCCESS)
 
         try:
-            plaintext = decrypt_message_e2e(envelope.model_dump(), private_key, key_id)
+            plaintext = decrypt_message_e2e(envelope.model_dump(), private_key, envelope.recipient_key_id)
         except AuthenticationError:
             events.emit(
                 EventType.AUTHENTICATION_FAILURE,
@@ -126,7 +144,7 @@ def create_receiver_app(
             raise HTTPException(status_code=400, detail="Message could not be decrypted") from None
 
         events.emit(EventType.DECRYPTION_SUCCESS)
-        _observe("decrypted")
+        _observe("decrypted", key_status=key_status)
 
         try:
             message = plaintext.decode("utf-8")

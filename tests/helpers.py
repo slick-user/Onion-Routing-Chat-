@@ -3,13 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-
 from fastapi import FastAPI
 
 from client.receiver import create_receiver_app
 from client.sender import Sender
 from config.settings import settings
-from crypto.keys import generate_keypair, import_private_key, import_public_key
+from crypto.keys import generate_keypair, import_private_key
 from networking.inprocess import InProcessNetwork
 from relay.node import create_relay_app
 from relay.registry import PeerRegistry
@@ -44,7 +43,9 @@ def build_stack(*, tmp_path, private_pems: dict[str, bytes], replay_ttl_seconds:
         relay_urls=dict(RELAY_BASE_URLS),
         receiver_urls={RECEIVER_ID: RECEIVER_BASE_URL},
     )
-    dbs = {service_id: Database(tmp_path / f"{service_id}.db") for service_id in list(RELAY_IDS) + [RECEIVER_ID]}
+    dbs = {
+        service_id: Database(tmp_path / f"{service_id}.db") for service_id in list(RELAY_IDS) + [RECEIVER_ID]
+    }
 
     receiver_app = create_receiver_app(
         receiver_id=RECEIVER_ID,
@@ -93,7 +94,9 @@ def build_sender(stack, *, entry_url: str = RELAY_BASE_URLS["relay-a"]) -> Sende
     )
 
 
-async def apost(app: FastAPI, path: str, payload: dict[str, Any], *, base_url: str = "http://test") -> httpx.Response:
+async def apost(
+    app: FastAPI, path: str, payload: dict[str, Any], *, base_url: str = "http://test"
+) -> httpx.Response:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url=base_url) as client:
         return await client.post(path, json=payload)

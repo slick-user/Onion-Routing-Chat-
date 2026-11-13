@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 
 from config.settings import settings
+from crypto.keyring import KeyRing
 from networking.limits import BodySizeLimitMiddleware
 from networking.schemas import HealthResponse, OnionEnvelope, RelayStatusResponse
 from observability.events import EventRecorder, EventStatus, EventType
@@ -43,13 +44,14 @@ def create_relay_app(
     *,
     relay_id: str,
     role: RelayRole,
-    private_key: Any,
-    key_id: str,
     registry: PeerRegistry,
     db: Database,
     forwarder: Forwarder,
     replay_ttl_seconds: int | None = None,
     observer: RelayObserver | None = None,
+    private_key: Any = None,
+    key_id: str | None = None,
+    keyring: KeyRing | None = None,
 ) -> FastAPI:
     ttl = replay_ttl_seconds if replay_ttl_seconds is not None else settings.replay_ttl_seconds
     events = EventRecorder(db, service_id=relay_id, service_type="relay")
@@ -58,6 +60,7 @@ def create_relay_app(
         role=role,
         private_key=private_key,
         key_id=key_id,
+        keyring=keyring,
         registry=registry,
         db=db,
         events=events,
@@ -82,6 +85,7 @@ def create_relay_app(
     )
     app.state.relay_id = relay_id
     app.state.role = role
+    app.state.keyring = processor.keyring
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_packet_bytes)
 
     @app.get("/health", response_model=HealthResponse)
@@ -94,8 +98,12 @@ def create_relay_app(
         return RelayStatusResponse(
             service_id=relay_id,
             packets_received=db.count_events(service_id=relay_id, event_type=EventType.PACKET_RECEIVED.value),
-            packets_forwarded=db.count_events(service_id=relay_id, event_type=EventType.PACKET_FORWARDED.value),
-            packets_delivered=db.count_events(service_id=relay_id, event_type=EventType.DELIVERY_SUCCESS.value),
+            packets_forwarded=db.count_events(
+                service_id=relay_id, event_type=EventType.PACKET_FORWARDED.value
+            ),
+            packets_delivered=db.count_events(
+                service_id=relay_id, event_type=EventType.DELIVERY_SUCCESS.value
+            ),
             packets_failed=_relay_failure_counts(db, relay_id),
             replays_detected=db.count_events(service_id=relay_id, event_type=EventType.REPLAY_DETECTED.value),
         )

@@ -1,16 +1,11 @@
-"""RSA key generation, import/export and secure on-disk storage.
-
-The project uses RSA-3072 keys for relay and receiver key pairs.  Private
-key files are written with mode ``0600`` and key directories with ``0700``.
-This module intentionally does not log key material.
-"""
+"""RSA key generation, loading and saving (private keys are mode 0600)."""
 
 from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
@@ -58,10 +53,7 @@ def _write_atomic(path: Path, data: bytes, mode: int) -> None:
 
 
 def save_keypair(keypair: Mapping[str, bytes], directory: str | Path, name: str) -> tuple[Path, Path]:
-    """Persist a key pair with secure permissions.
-
-    Returns ``(private_path, public_path)``.
-    """
+    """Save a key pair with safe file permissions. Returns (private_path, public_path)."""
     path = Path(directory)
     _secure_makedirs(path)
 
@@ -123,11 +115,7 @@ def generate_service_keys(
     bits: int = DEFAULT_BITS,
     force: bool = False,
 ) -> dict[str, tuple[Path, Path]]:
-    """Generate key pairs for a set of logical service names.
-
-    ``names`` maps a service name to a key identifier.  Returns a mapping of
-    service name to ``(private_path, public_path)``.
-    """
+    """Create key pairs for the given services, keeping existing ones unless force=True."""
     if names is None:
         names = {
             "relay-a": "relay-a-key",
