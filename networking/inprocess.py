@@ -1,22 +1,16 @@
-"""In-process ASGI transport for demo and test deployments.
+"""In-process network used by the hosted demo and the tests.
 
-The real services always talk HTTP: relays POST to trusted registry URLs and
-the receiver answers on its own endpoint.  When the whole topology runs inside
-one process (the hosted demo and the test-suite) we still want that same HTTP
-boundary, so this module implements a small forwarder that dispatches trusted
-registry URLs to mounted ASGI applications with ``httpx.ASGITransport``.
-
-Only URLs registered explicitly through :meth:`InProcessNetwork.register` can
-be reached; packet contents can never introduce a new endpoint.
+All services run in one process but still talk real HTTP through
+httpx.ASGITransport. Only registered URLs can be reached.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-
 from fastapi import FastAPI
 
 from networking.transport import TransportError
@@ -27,6 +21,8 @@ class InProcessNetwork:
 
     def __init__(self) -> None:
         self.apps: dict[str, FastAPI] = {}
+        # Taps see every packet sent (url, payload) but cannot change it. Used by adversary/.
+        self.taps: list[Callable[[str, dict[str, Any]], None]] = []
 
     def register(self, base_url: str, app: FastAPI) -> None:
         self.apps[base_url.rstrip("/")] = app
@@ -46,6 +42,9 @@ class InProcessNetwork:
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         base, app, path = self._app_for(url)
+        if method == "POST" and payload is not None:
+            for tap in list(self.taps):
+                tap(url, payload)
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url=base) as client:
             if method == "POST":

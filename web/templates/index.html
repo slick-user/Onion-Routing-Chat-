@@ -279,6 +279,53 @@
           </article>
         </aside>
       </div>
+
+      <article class="card" id="traffic-card">
+        <div class="card-head">
+          <h2 class="card-title">
+            Traffic analysis: can a network observer link Alice to Bob?
+            <span class="info" tabindex="0" role="note"
+                  data-tip="A global passive observer watches every link. It cannot decrypt anything, but it sees packet sizes and timing."
+                  aria-label="A global passive observer watches every link. It cannot decrypt anything, but it sees packet sizes and timing.">i</span>
+          </h2>
+          <span class="badge">adversary simulation</span>
+        </div>
+        <p class="card-sub">
+          Several users send one message each through the real relays while a simulated observer records
+          the size and time of every packet. Two attacks then try to match each message reaching Bob to its
+          sender: <strong>by size</strong> (big in, big out) and <strong>by timing</strong> (first in, first out).
+          The experiment runs three times: with no defences, with fixed-size cells (padding), and with cells plus
+          random mixing delays at each relay.
+        </p>
+        <div class="traffic-controls">
+          <label for="traffic-mix">Mixing delay per relay</label>
+          <select id="traffic-mix" class="select">
+            <option value="100">up to 100 ms</option>
+            <option value="250" selected>up to 250 ms</option>
+            <option value="500">up to 500 ms</option>
+          </select>
+          <button type="button" class="btn primary" id="traffic-run">Run experiment</button>
+          <span class="micro" id="traffic-status" role="status" aria-live="polite"></span>
+        </div>
+        <div id="traffic-result" hidden>
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th scope="col">Configuration</th>
+                  <th scope="col">Size attack linked</th>
+                  <th scope="col">Timing attack linked</th>
+                  <th scope="col">Average latency</th>
+                  <th scope="col">Bytes per message (4 links)</th>
+                  <th scope="col">Packet size on each link</th>
+                </tr>
+              </thead>
+              <tbody id="traffic-body"></tbody>
+            </table>
+          </div>
+          <p class="micro" id="traffic-note"></p>
+        </div>
+      </article>
     </section>
 
     <!-- Learn -->
@@ -404,7 +451,7 @@
           </div>
           <ul class="tradeoffs">
             <li><strong>Three fixed relays.</strong> The demo uses a static path for clarity; a real network needs path selection, diversity, and churn handling.</li>
-            <li><strong>Timing and size leakage.</strong> Packet sizes shrink at each hop and timing can correlate traffic. Production systems use fixed-size cells and cover traffic.</li>
+            <li><strong>Timing and size leakage.</strong> Without defences, packets shrink at each hop and match in size and order at both ends. OnionChat pads every packet to one fixed-size cell and can add random mixing delays; the Security Lab measures what each defence costs. There is still no cover traffic, so a long-term observer of a quiet network can correlate activity.</li>
             <li><strong>No sender authentication.</strong> Bob knows the message is authentic as ciphertext, but not who sent it. A signature or anonymous credential layer would be needed.</li>
             <li><strong>Endpoint trust.</strong> Compromising Alice or Bob exposes plaintext. Onion routing protects the path in between, not the endpoints.</li>
             <li><strong>Single-process hosting.</strong> The hosted demo runs all services in one process for free deployment; the request/relay code paths still use real HTTP semantics.</li>

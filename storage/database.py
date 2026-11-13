@@ -6,10 +6,11 @@ import os
 import sqlite3
 import time
 import uuid
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 
 def utc_now_iso() -> str:
@@ -17,12 +18,7 @@ def utc_now_iso() -> str:
 
 
 class Database:
-    """Small SQLite wrapper.
-
-    A fresh connection is opened per operation, which keeps the wrapper safe
-    for FastAPI's threadpool without sharing a connection across threads.
-    WAL mode and a busy timeout make short concurrent writes reliable.
-    """
+    """SQLite storage for messages, operational events and the replay cache."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -111,9 +107,7 @@ class Database:
                 """
             )
 
-    # ------------------------------------------------------------------
     # Events / observability
-    # ------------------------------------------------------------------
     def insert_event(
         self,
         *,
@@ -184,9 +178,7 @@ class Database:
             row = connection.execute(query, params).fetchone()
         return int(row["total"]) if row else 0
 
-    # ------------------------------------------------------------------
     # Receiver messages
-    # ------------------------------------------------------------------
     def insert_message(
         self,
         *,
@@ -246,9 +238,15 @@ class Database:
         with self._session() as connection:
             return connection.execute(query, params).rowcount
 
-    # ------------------------------------------------------------------
+    def delete_messages_after(self, *, receiver_id: str, message_id: int) -> int:
+        """Delete messages newer than ``message_id`` (cleans up experiment traffic)."""
+        with self._session() as connection:
+            return connection.execute(
+                "DELETE FROM messages WHERE receiver_id = ? AND id > ?",
+                (receiver_id, message_id),
+            ).rowcount
+
     # Replay protection
-    # ------------------------------------------------------------------
     def purge_expired_replays(self, *, now: float | None = None) -> int:
         current = time.time() if now is None else now
         with self._session() as connection:
@@ -278,11 +276,7 @@ class Database:
         ttl_seconds: int,
         now: float | None = None,
     ) -> bool:
-        """Persist an accepted packet digest.
-
-        Returns ``False`` when the digest already exists (a duplicate), making
-        the operation safe against concurrent submissions.
-        """
+        """Remember a packet digest. Returns False if it was already seen."""
         current = time.time() if now is None else now
         self.purge_expired_replays(now=current)
         with self._session() as connection:

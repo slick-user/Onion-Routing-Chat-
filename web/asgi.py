@@ -1,9 +1,4 @@
-"""ASGI entry point for ``uvicorn web.asgi:app``.
-
-Keeping application construction here means importing :mod:`web.app` (for
-tests or reuse) never generates keys or opens the demo databases as a side
-effect.
-"""
+"""ASGI entry point: uvicorn web.asgi:app"""
 
 from __future__ import annotations
 

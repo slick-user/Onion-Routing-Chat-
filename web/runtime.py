@@ -23,6 +23,7 @@ from crypto.keyring import KeyRing
 from crypto.keys import generate_service_keys, key_fingerprint
 from crypto.onion import build_onion, canonical_json, peel_layer, seal_layer
 from networking.inprocess import InProcessNetwork
+from networking.traffic_policy import TrafficPolicy
 from networking.transport import TransportError, relay_url, status_url
 from relay.node import create_relay_app
 from relay.registry import PeerRegistry
@@ -70,6 +71,8 @@ class WebRuntime:
     # -inf, not 0: time.monotonic() counts from boot and can be small on a
     # freshly started server, which would wrongly throttle the first action.
     last_key_action: float = float("-inf")
+    # Shared by the sender and all relays (padding + mixing settings).
+    policy: TrafficPolicy = field(default_factory=TrafficPolicy)
     # One shared inbox and replay cache, so sends and experiments run one at a time.
     operation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -135,6 +138,7 @@ class WebRuntime:
             receiver_urls={receiver_id: INTERNAL_RECEIVER_URL},
         )
         network = InProcessNetwork()
+        policy = settings.traffic_policy()
         dbs = {service_id: Database(db_path / f"{service_id}.db") for service_id in service_ids}
 
         receiver_app = create_receiver_app(
@@ -151,6 +155,7 @@ class WebRuntime:
                 relay_id=relay_id,
                 role=RelayRole(settings.relay_role(relay_id)),
                 keyring=keyrings[relay_id],
+                policy=policy,
                 registry=registry,
                 db=dbs[relay_id],
                 forwarder=network,
@@ -169,6 +174,7 @@ class WebRuntime:
             relay_public_keys={relay_id: public_keys[relay_id] for relay_id in RELAY_IDS},
             relay_key_ids={relay_id: key_ids[relay_id] for relay_id in RELAY_IDS},
             forwarder=network,
+            policy=policy,
         )
 
         return cls(
@@ -183,6 +189,7 @@ class WebRuntime:
             keys_dir=keys_path,
             keyrings=keyrings,
             key_bits=key_bits,
+            policy=policy,
         )
 
     # Demo actions
@@ -455,6 +462,14 @@ class WebRuntime:
             result = ring.revoke(key_id, reason=reason, replacement=replacement)
             self.sync_keys()
             return {"service_id": service_id, "action": "revoked", **result}
+
+    async def traffic_analysis(self, **options: Any) -> dict[str, Any]:
+        """Run the global-passive-observer experiment (adversary/traffic_analysis.py)."""
+        from adversary.traffic_analysis import run_traffic_analysis
+
+        async with self.operation_lock:
+            self.sync_keys()
+            return await run_traffic_analysis(self, **options)
 
     async def probe_key(self, service_id: str, key_id: str) -> dict[str, Any]:
         """Send a real onion that uses one specific key for one service.

@@ -2230,3 +2230,20 @@ h1 {
     align-items: flex-start;
   }
 }
+
+/* Traffic analysis card */
+#traffic-card {
+  margin-top: 22px;
+}
+
+.traffic-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.mono {
+  font-family: var(--mono);
+}

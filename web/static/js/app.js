@@ -658,8 +658,10 @@
       const first = Number(received[0].packet_bytes);
       const last = Number(received[received.length - 1].packet_bytes);
       caption.textContent =
-        "The envelope shrinks from " + formatInt(first) + " B at Relay A to " + formatInt(last) +
-        " B at the exit: each peel removes one wrapped AES key and one routing instruction.";
+        first === last
+          ? "Every relay receives exactly " + formatInt(first) + " B. Fixed-size cells hide which hop a packet is on and how long the message is."
+          : "The envelope shrinks from " + formatInt(first) + " B at Relay A to " + formatInt(last) +
+            " B at the exit: each peel removes one wrapped AES key and one routing instruction.";
     }
   }
 
@@ -1142,6 +1144,65 @@
     button.addEventListener("click", () => withBusy(button, () => handleReset(button)));
   }
 
+  // Traffic analysis experiment
+  function percent(value) {
+    return Math.round(Number(value) * 100) + "%";
+  }
+
+  function renderTrafficResult(data) {
+    const body = $("#traffic-body");
+    if (!body) return;
+    clear(body);
+    (data.scenarios || []).forEach((row) => {
+      const tr = el("tr");
+      const name = el("th", "", row.title);
+      name.scope = "row";
+      tr.appendChild(name);
+      [row.size_attack_accuracy, row.timing_attack_accuracy].forEach((value) => {
+        // Close to a blind guess = the attack learned nothing.
+        const defended = Number(value) <= Number(data.random_guess) * 2;
+        tr.appendChild(cell(el("span", "pill " + (defended ? "success" : "failure"), percent(value))));
+      });
+      tr.appendChild(cell(formatInt(Math.round(row.avg_latency_ms)) + " ms"));
+      tr.appendChild(cell(formatInt(row.bytes_per_message) + " B"));
+      tr.appendChild(
+        cell((row.link_bytes || []).map((link) => formatInt(link.avg_bytes)).join(" → "), "small mono")
+      );
+      body.appendChild(tr);
+    });
+    const note = $("#traffic-note");
+    if (note) {
+      note.textContent =
+        data.senders + " users × " + data.rounds + " rounds. A blind guess links " + percent(data.random_guess) +
+        " of messages; green means the attack did no better than about twice that. Experiment messages are removed from Bob's inbox afterwards.";
+    }
+    $("#traffic-result").hidden = false;
+  }
+
+  function initTraffic() {
+    const button = $("#traffic-run");
+    if (!button) return;
+    button.addEventListener("click", () =>
+      withBusy(button, async () => {
+        const status = $("#traffic-status");
+        if (status) status.textContent = "Sending traffic through the relays… (a few seconds)";
+        try {
+          const mix = Number($("#traffic-mix").value) || 250;
+          const data = await api("/api/traffic-analysis", {
+            method: "POST",
+            body: JSON.stringify({ senders: 6, rounds: 3, mix_delay_ms: mix }),
+          });
+          renderTrafficResult(data);
+          if (status) status.textContent = "Done.";
+          loadEvents({ quiet: true });
+        } catch (error) {
+          if (status) status.textContent = "";
+          toast("Experiment failed: " + error.message, "error");
+        }
+      })
+    );
+  }
+
   // Key lifecycle (rotate / revoke / probe)
   const KEY_STATUS_PILL = {
     active: "success",
@@ -1502,6 +1563,7 @@
     initTooltips();
     initReset();
     initLifecycle();
+    initTraffic();
     initTour();
     resetCircuitVisuals();
     setInspectorPlaceholder();
