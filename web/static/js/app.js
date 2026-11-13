@@ -2,9 +2,7 @@
 (function () {
   "use strict";
 
-  // ---------------------------------------------------------------------
   // Utilities
-  // ---------------------------------------------------------------------
   const $ = (selector, root) => (root || document).querySelector(selector);
   const $$ = (selector, root) => Array.from((root || document).querySelectorAll(selector));
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -18,6 +16,8 @@
     attacksRunning: false,
     eventsRequest: 0,
     inboxRequest: 0,
+    keyActionBusy: false,
+    hasRetiredKeys: false,
   };
 
   function el(tag, className, text) {
@@ -127,9 +127,7 @@
     state.pendingSleeps.clear();
   }
 
-  // ---------------------------------------------------------------------
   // Tabs
-  // ---------------------------------------------------------------------
   const tabs = $$(".tab");
   const panels = $$(".panel");
 
@@ -185,9 +183,7 @@
     });
   }
 
-  // ---------------------------------------------------------------------
   // Status and overview
-  // ---------------------------------------------------------------------
   function setStatus(text, mode) {
     const pill = $("#app-status");
     $("#status-text").textContent = text;
@@ -313,9 +309,7 @@
     }
   }
 
-  // ---------------------------------------------------------------------
   // Circuit
-  // ---------------------------------------------------------------------
   const DEFAULT_HOP_STATE = {
     alice: "builds the onion",
     "relay-a": "idle",
@@ -520,9 +514,7 @@
     if (badge) badge.textContent = "delivered";
   }
 
-  // ---------------------------------------------------------------------
   // Inspector and layer chart
-  // ---------------------------------------------------------------------
   function setInspectorPlaceholder() {
     const inspector = $("#inspector");
     if (!inspector) return;
@@ -671,9 +663,7 @@
     }
   }
 
-  // ---------------------------------------------------------------------
   // Send
-  // ---------------------------------------------------------------------
   const form = $("#send-form");
   const input = $("#message-input");
   const sendButton = $("#send-button");
@@ -785,9 +775,7 @@
     });
   }
 
-  // ---------------------------------------------------------------------
   // Inbox and events
-  // ---------------------------------------------------------------------
   async function loadInbox(options) {
     const opts = options || {};
     const token = ++state.inboxRequest;
@@ -881,9 +869,7 @@
     }
   }
 
-  // ---------------------------------------------------------------------
   // Security lab
-  // ---------------------------------------------------------------------
   function setAttackResultPending(button) {
     const card = $("#attack-result");
     if (!card) return;
@@ -1033,9 +1019,7 @@
     });
   }
 
-  // ---------------------------------------------------------------------
   // Learn tab: layer explainer
-  // ---------------------------------------------------------------------
   const LAYER_INFO = {
     a: {
       lead: "Relay A (entry)",
@@ -1092,9 +1076,7 @@
     });
   }
 
-  // ---------------------------------------------------------------------
   // Tooltips
-  // ---------------------------------------------------------------------
   function initTooltips() {
     const closeAll = () => $$(".info.is-open").forEach((node) => node.classList.remove("is-open"));
     $$(".info").forEach((node) => {
@@ -1114,9 +1096,7 @@
     document.addEventListener("click", closeAll);
   }
 
-  // ---------------------------------------------------------------------
   // Reset
-  // ---------------------------------------------------------------------
   async function handleReset(button) {
     const confirmed = window.confirm(
       "Clear all delivered messages, replay caches, and event logs? Key files are kept."
@@ -1162,9 +1142,215 @@
     button.addEventListener("click", () => withBusy(button, () => handleReset(button)));
   }
 
-  // ---------------------------------------------------------------------
+  // Key lifecycle (rotate / revoke / probe)
+  const KEY_STATUS_PILL = {
+    active: "success",
+    retired: "rejected",
+    expired: "",
+    revoked: "failure",
+  };
+
+  function keyStatusPill(status) {
+    const node = el("span", "pill", status);
+    const extra = KEY_STATUS_PILL[status];
+    if (extra) node.classList.add(extra);
+    return node;
+  }
+
+  function epochToIso(seconds) {
+    if (seconds === null || seconds === undefined) return null;
+    return new Date(Number(seconds) * 1000).toISOString();
+  }
+
+  function keyNote(key) {
+    if (key.status === "active") return "advertised to senders";
+    if (key.status === "retired") return "accepted for " + formatInt(key.grace_remaining_seconds) + " s more";
+    if (key.status === "expired") return "grace ended · private key destroyed";
+    if (key.status === "revoked") return "revoked: " + (key.reason || "manual") + " · private key destroyed";
+    return "—";
+  }
+
+  function lifecycleButton(label, action, data, extraClass) {
+    const button = el("button", "btn ghost small" + (extraClass ? " " + extraClass : ""), label);
+    button.type = "button";
+    button.dataset.action = action;
+    Object.keys(data).forEach((name) => {
+      button.dataset[name] = data[name];
+    });
+    return button;
+  }
+
+  function renderLifecycle(services) {
+    const list = $("#lifecycle-list");
+    if (!list) return;
+    clear(list);
+    state.hasRetiredKeys = false;
+    (services || []).forEach((service) => {
+      const block = el("section", "lifecycle-service");
+      const head = el("div", "lifecycle-head");
+      const title = el("h3", "lifecycle-title", serviceLabel(service.service_id));
+      title.appendChild(el("span", "lifecycle-role", service.role));
+      head.appendChild(title);
+      const rotate = lifecycleButton("Rotate key", "rotate", { service: service.service_id });
+      rotate.setAttribute("aria-label", "Rotate the key of " + serviceLabel(service.service_id));
+      head.appendChild(rotate);
+      block.appendChild(head);
+
+      const wrap = el("div", "table-wrap");
+      const table = el("table", "table lifecycle-table");
+      const thead = el("thead");
+      const headRow = el("tr");
+      ["Key ID", "Status", "Fingerprint", "Created", "Note", "Actions"].forEach((label) => {
+        const th = el("th", "", label);
+        th.scope = "col";
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      const body = el("tbody");
+      (service.keys || []).forEach((key) => {
+        if (key.status === "retired") state.hasRetiredKeys = true;
+        const row = el("tr");
+        const id = el("th", "", "");
+        id.scope = "row";
+        id.appendChild(el("span", "mode", key.key_id));
+        row.appendChild(id);
+        row.appendChild(cell(keyStatusPill(key.status)));
+        row.appendChild(cell(el("span", "fingerprint", key.fingerprint)));
+        row.appendChild(cell(formatTimeOnly(epochToIso(key.created_at))));
+        row.appendChild(cell(keyNote(key), "small"));
+        const actions = el("td", "lifecycle-actions");
+        actions.appendChild(
+          lifecycleButton("Send test onion", "probe", { service: service.service_id, key: key.key_id })
+        );
+        if (key.status !== "revoked") {
+          actions.appendChild(
+            lifecycleButton("Revoke", "revoke", { service: service.service_id, key: key.key_id }, "danger-ghost")
+          );
+        }
+        row.appendChild(actions);
+        body.appendChild(row);
+      });
+      table.appendChild(body);
+      wrap.appendChild(table);
+      block.appendChild(wrap);
+      list.appendChild(block);
+    });
+    if (!list.children.length) list.appendChild(el("p", "empty small", "Key rings unavailable."));
+  }
+
+  async function loadKeys(options) {
+    const opts = options || {};
+    try {
+      const data = await api("/api/keys");
+      renderLifecycle(data.services || []);
+      const badge = $("#grace-badge");
+      if (badge && data.grace_seconds !== undefined) badge.textContent = "grace " + data.grace_seconds + " s";
+      return data;
+    } catch (error) {
+      if (!opts.quiet) toast("Could not load key rings.", "error");
+      return null;
+    }
+  }
+
+  function renderProbeResult(data) {
+    const box = $("#probe-result");
+    if (!box) return;
+    clear(box);
+    box.hidden = false;
+    box.classList.toggle("is-ok", Boolean(data.delivered));
+    box.classList.toggle("is-blocked", !data.delivered);
+
+    const verdict = data.delivered
+      ? "Delivered. " + serviceLabel(data.service_id) + " accepted " + data.key_status + " key " + data.key_id + "."
+      : "Rejected by " + serviceLabel(data.rejected_by || data.service_id) + ": " +
+        humanize(data.error_category || "rejected") + ". The packet never reached Bob.";
+    box.appendChild(el("p", "probe-verdict", verdict));
+
+    if (data.key_status === "retired" && data.delivered) {
+      box.appendChild(
+        el("p", "micro", "This key was rotated out but is still inside its grace period, so in-flight packets are not lost.")
+      );
+    }
+    if (!data.delivered) {
+      box.appendChild(
+        el("p", "micro", "Entry relay HTTP status: " + data.status_code + ". Every hop before the rejecting one did its normal work; the stale key is caught exactly where it is used.")
+      );
+    }
+
+    const steps = el("ol", "probe-steps");
+    (data.trace || [])
+      .filter((event) => ["decrypted", "rejected", "stored"].indexOf(event.stage) !== -1)
+      .forEach((event) => {
+        let text = serviceLabel(event.service_id) + " · " + humanize(event.stage);
+        if (event.key_status) text += " with " + event.key_status + " key";
+        if (event.error_category) text += " · " + humanize(event.error_category);
+        steps.appendChild(el("li", event.stage === "rejected" ? "is-rejected" : "", text));
+      });
+    if (steps.children.length) box.appendChild(steps);
+  }
+
+  async function handleLifecycleAction(button) {
+    const action = button.dataset.action;
+    const service = button.dataset.service;
+    const key = button.dataset.key;
+    if (action === "rotate") {
+      const data = await api("/api/keys/rotate", {
+        method: "POST",
+        body: JSON.stringify({ service_id: service }),
+      });
+      renderLifecycle(data.services);
+      toast(serviceLabel(service) + " rotated to " + data.active.key_id + ".", "success");
+      loadOverview({ quiet: true });
+    } else if (action === "revoke") {
+      const reason = window.prompt(
+        "Revoke " + key + "? Packets using it will be rejected immediately and its private key destroyed.\n\nReason:",
+        "suspected compromise"
+      );
+      if (reason === null) return;
+      const data = await api("/api/keys/revoke", {
+        method: "POST",
+        body: JSON.stringify({ service_id: service, key_id: key, reason: reason || "manual revocation" }),
+      });
+      renderLifecycle(data.services);
+      let message = key + " revoked.";
+      if (data.replacement) message += " New active key: " + data.replacement.key_id + ".";
+      toast(message, "success");
+      loadOverview({ quiet: true });
+    } else if (action === "probe") {
+      const data = await api("/api/keys/probe", {
+        method: "POST",
+        body: JSON.stringify({ service_id: service, key_id: key }),
+      });
+      renderProbeResult(data);
+      loadEvents({ quiet: true });
+      loadInbox({ quiet: true });
+    }
+  }
+
+  function initLifecycle() {
+    const list = $("#lifecycle-list");
+    if (!list) return;
+    list.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button || state.keyActionBusy) return;
+      state.keyActionBusy = true;
+      button.classList.add("is-loading");
+      withBusy(button, () => handleLifecycleAction(button))
+        .catch((error) => toast("Key action failed: " + error.message, "error"))
+        .finally(() => {
+          state.keyActionBusy = false;
+          button.classList.remove("is-loading");
+        });
+    });
+    // Keep grace-period countdowns honest while the Keys tab is open.
+    window.setInterval(() => {
+      const panel = $("#panel-keys");
+      if (panel && !panel.hidden && state.hasRetiredKeys && !state.keyActionBusy) loadKeys({ quiet: true });
+    }, 5000);
+  }
+
   // Guided tour
-  // ---------------------------------------------------------------------
   const TOUR_KEY = "onionchat.tour.v1";
   const TOUR_STEPS = [
     {
@@ -1200,7 +1386,7 @@
       target: "#keys-card",
       title: "5 · Keys and logs, never plaintext",
       text:
-        "Inspect public key fingerprints, service counters, and sanitised events. Private keys stay on the server, and message contents never appear in logs.",
+        "Inspect public key fingerprints, service counters, and sanitised events. Rotate or revoke any key, then send a test onion to see the relays enforce it. Private keys stay on the server.",
     },
   ];
 
@@ -1306,9 +1492,7 @@
     }
   }
 
-  // ---------------------------------------------------------------------
   // Init
-  // ---------------------------------------------------------------------
   function init() {
     initTabs();
     initComposer();
@@ -1317,6 +1501,7 @@
     initLearn();
     initTooltips();
     initReset();
+    initLifecycle();
     initTour();
     resetCircuitVisuals();
     setInspectorPlaceholder();
@@ -1325,6 +1510,7 @@
     loadOverview({ quiet: false }).catch(() => {});
     loadInbox({ quiet: true });
     loadEvents({ quiet: true });
+    loadKeys({ quiet: true });
   }
 
   if (document.readyState === "loading") {

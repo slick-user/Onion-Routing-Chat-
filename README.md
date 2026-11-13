@@ -36,6 +36,9 @@ the Security Lab. See [Interactive web demo](#interactive-web-demo).
 - Independent AES-256-GCM end-to-end encryption between sender and receiver.
 - Strict Pydantic packet validation and hard request-body limits.
 - Trusted local relay/receiver registry (no arbitrary next-hop URLs).
+- Full key lifecycle per service: generation, rotation with a grace period,
+  automatic expiry and immediate revocation, enforced by every relay and the
+  receiver (see [Key lifecycle](#key-lifecycle)).
 - Persistent SQLite replay protection with configurable retention.
 - Structured JSON logs and SQLite operational events.
 - Responsive, dependency-free web UI with a guided tour, accessible tooltips,
@@ -121,8 +124,46 @@ Useful web environment variables:
 
 The JSON API is also usable directly: `GET /health`, `GET /api/overview`,
 `POST /api/send`, `GET /api/messages`, `GET /api/events`,
-`POST /api/attack`, `POST /api/reset`. FastAPI's OpenAPI pages are available
+`POST /api/attack`, `POST /api/reset`, `GET /api/keys`,
+`POST /api/keys/rotate`, `POST /api/keys/revoke`, `POST /api/keys/probe`. FastAPI's OpenAPI pages are available
 at `/docs`.
+
+## Key lifecycle
+
+Every relay and the receiver owns a **key ring** (`crypto/keyring.py`) rather
+than a single key. Each key moves through these states:
+
+| State | Meaning | Packets addressed to it |
+|---|---|---|
+| `active` | Current key, advertised to senders | Accepted |
+| `retired` | Replaced by a rotation, inside the grace period | Accepted (so in-flight packets are not lost) |
+| `expired` | Grace period over; private key destroyed | Rejected with `key_expired` |
+| `revoked` | Withdrawn immediately (e.g. suspected compromise); private key destroyed | Rejected with `key_revoked` |
+
+- **Generation:** RSA-3072 via PyCryptodome. New key IDs are derived from the
+  public-key fingerprint (`relay-b-6b2e7782`); the original keys keep their
+  legacy IDs (`relay-b-key`) so existing packets stay valid.
+- **Distribution:** senders always build onions for the active key of each hop.
+  In the web demo the sender refreshes its directory before every send; the CLI
+  sender reads the current key ring from disk.
+- **Storage:** private keys are `0600`, the key directory `0700`. A manifest
+  (`<service>_keyring.json`) records state but never key material. Retired keys
+  are archived separately and overwritten-then-deleted when they expire or are
+  revoked.
+- **Revocation:** takes effect immediately. Revoking the active key generates a
+  replacement automatically so the circuit keeps working.
+
+```bash
+python main.py keys                                   # list every key ring
+python main.py rotate-key --id relay-b                # old key enters the grace period
+python main.py revoke-key --id relay-b --key-id relay-b-key --reason "laptop stolen"
+```
+
+Relays started with `run-relay` reload the manifest when it changes, so a
+rotation or revocation made from another terminal takes effect without a
+restart. In the web UI, **Keys & logs → Key lifecycle** offers the same actions
+plus **Send test onion**, which builds a real packet using one specific key and
+shows which hop accepts or rejects it.
 
 ## Running services individually
 
@@ -263,11 +304,14 @@ packets are rejected.
 
 Web tests additionally cover page/static rendering and security headers, the
 send trace, all seven attack experiments, event aggregation and sanitisation,
-key-metadata exposure, and reset behaviour. The full suite is **62 tests**:
+key-metadata exposure, and reset behaviour. Key-lifecycle tests cover
+rotation, grace-period acceptance, expiry, revocation, cross-process reloads,
+file permissions, and rejection of stale keys by the real relays and receiver.
+The full suite is **75 tests**:
 
 ```bash
 ./.venv/bin/python -m pytest -q
-# 62 passed
+# 75 passed
 ```
 
 ## Protocol summary
@@ -336,6 +380,8 @@ encryption.
 - Generic public error responses; detailed categories only in sanitized
   operational events.
 - Private-key files created with `0600` and loaded defensively.
+- Key rotation with a bounded grace period, automatic expiry, and immediate
+  revocation; expired/revoked private keys are destroyed.
 - No plaintext, keys, session keys, raw packets, or client IPs in structured
   logs or event rows.
 
@@ -404,6 +450,8 @@ Defaults live in `config/settings.py`:
 - request timeout (10 s);
 - maximum request body (256 KiB) and field size;
 - replay retention (300 s);
+- key grace period after rotation (`ONIONCHAT_KEY_GRACE_SECONDS`, default 120 s);
+- minimum gap between web key actions (`ONIONCHAT_KEY_COOLDOWN_SECONDS`, default 2 s);
 - key and database directories.
 
 Replay retention can be changed per relay when constructing the app, or

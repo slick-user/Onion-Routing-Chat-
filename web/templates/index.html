@@ -54,7 +54,7 @@
   </nav>
 
   <main id="main" class="page">
-    <!-- ============================== CIRCUIT ============================== -->
+    <!-- Circuit -->
     <section class="panel" id="panel-circuit" role="tabpanel" aria-labelledby="tab-circuit" tabindex="0">
       <div class="panel-head">
         <p class="eyebrow">Live demo</p>
@@ -225,7 +225,7 @@
       </article>
     </section>
 
-    <!-- ============================== SECURITY LAB ============================== -->
+    <!-- Security Lab -->
     <section class="panel" id="panel-lab" role="tabpanel" aria-labelledby="tab-lab" tabindex="0" hidden>
       <div class="panel-head">
         <p class="eyebrow">Security lab</p>
@@ -281,7 +281,7 @@
       </div>
     </section>
 
-    <!-- ============================== LEARN ============================== -->
+    <!-- Learn -->
     <section class="panel" id="panel-learn" role="tabpanel" aria-labelledby="tab-learn" tabindex="0" hidden>
       <div class="panel-head">
         <p class="eyebrow">How it works</p>
@@ -413,7 +413,7 @@
       </div>
     </section>
 
-    <!-- ============================== KEYS & LOGS ============================== -->
+    <!-- Keys & Logs -->
     <section class="panel" id="panel-keys" role="tabpanel" aria-labelledby="tab-keys" tabindex="0" hidden>
       <div class="panel-head">
         <p class="eyebrow">Observability</p>
@@ -478,6 +478,32 @@
             </tbody>
           </table>
         </div>
+      </article>
+
+      <article class="card" id="lifecycle-card">
+        <div class="card-head">
+          <h2 class="card-title">
+            Key lifecycle: rotate, revoke, test
+            <span class="info" tabindex="0" role="note"
+                  data-tip="Rotation replaces a key on a schedule. Revocation withdraws a key that may be compromised. Both are enforced by the real relays."
+                  aria-label="Rotation replaces a key on a schedule. Revocation withdraws a key that may be compromised. Both are enforced by the real relays.">i</span>
+          </h2>
+          <span class="badge" id="grace-badge">grace {{ key_grace_seconds }} s</span>
+        </div>
+        <p class="card-sub">
+          <strong>Rotate</strong> gives a service a fresh key pair. The old key stays
+          <span class="pill rejected">retired</span> for a short grace period so packets already in flight
+          still arrive, then becomes <span class="pill">expired</span> and its private key is destroyed.
+          <strong>Revoke</strong> marks a key <span class="pill failure">revoked</span> at once, for example
+          when it may have been stolen. Revoking an <span class="pill success">active</span> key generates a
+          replacement automatically, so the circuit keeps working.
+          <strong>Send test onion</strong> builds a real packet that uses that exact key, so you can watch
+          each hop accept or reject it.
+        </p>
+        <div id="lifecycle-list" class="lifecycle-list" aria-live="polite">
+          <p class="empty small">Loading key rings…</p>
+        </div>
+        <div id="probe-result" class="probe-result" role="status" aria-live="polite" hidden></div>
       </article>
 
       <article class="card">
